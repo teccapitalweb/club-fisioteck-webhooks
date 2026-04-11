@@ -14,6 +14,8 @@ const db = admin.firestore();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET || '';
+const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || '';
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'pfueck-wm.myshopify.com';
 
 // Raw body needed for Shopify webhook verification
 app.use('/webhooks', express.raw({ type: 'application/json' }));
@@ -249,6 +251,149 @@ app.post('/api/link-member', async (req, res) => {
   }
 });
 
+// ===== API: Cancel subscription (from Club dashboard) =====
+app.post('/api/cancel-subscription', async (req, res) => {
+  try {
+    const { email, uid } = req.body;
+    if (!email && !uid) return res.status(400).json({ error: 'Email or UID required' });
+
+    // 1. Find member in Firebase
+    let member = null;
+    let memberDocId = null;
+
+    if (uid) {
+      const doc = await db.collection('members').doc(uid).get();
+      if (doc.exists) {
+        member = doc.data();
+        memberDocId = uid;
+      }
+    }
+    if (!member && email) {
+      const found = await findMemberByEmail(email);
+      if (found) {
+        member = found;
+        memberDocId = found.uid;
+      }
+    }
+
+    if (!member || !memberDocId) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
+
+    const memberEmail = (member.email || email || '').toLowerCase();
+    console.log(`Cancel request from: ${memberEmail}`);
+
+    // 2. Find customer in Shopify by email
+    let shopifyCancelled = false;
+    if (SHOPIFY_ACCESS_TOKEN && memberEmail) {
+      try {
+        // Search customer by email
+        const custRes = await fetch(
+          `https://${SHOPIFY_STORE}/admin/api/2024-01/customers/search.json?query=email:${encodeURIComponent(memberEmail)}`,
+          { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } }
+        );
+        const custData = await custRes.json();
+        const customer = custData.customers?.[0];
+
+        if (customer) {
+          // Use GraphQL to find and cancel subscription contracts
+          const graphqlRes = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`,
+            {
+              method: 'POST',
+              headers: {
+                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                query: `{
+                  subscriptionContracts(first: 10, query: "customer_id:${customer.id}") {
+                    edges {
+                      node {
+                        id
+                        status
+                      }
+                    }
+                  }
+                }`
+              })
+            }
+          );
+          const graphqlData = await graphqlRes.json();
+          const contracts = graphqlData.data?.subscriptionContracts?.edges || [];
+
+          // Cancel each active subscription
+          for (const edge of contracts) {
+            if (edge.node.status === 'ACTIVE') {
+              const cancelRes = await fetch(
+                `https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    query: `mutation {
+                      subscriptionContractCancel(subscriptionContractId: "${edge.node.id}") {
+                        contract { id status }
+                        userErrors { field message }
+                      }
+                    }`
+                  })
+                }
+              );
+              const cancelData = await cancelRes.json();
+              const errors = cancelData.data?.subscriptionContractCancel?.userErrors || [];
+              if (errors.length === 0) {
+                console.log(`Shopify subscription cancelled: ${edge.node.id}`);
+                shopifyCancelled = true;
+              } else {
+                console.log(`Shopify cancel error:`, errors);
+              }
+            }
+          }
+
+          if (contracts.length === 0) {
+            console.log(`No active subscriptions found in Shopify for ${memberEmail}`);
+            shopifyCancelled = true; // No subs to cancel = OK
+          }
+        } else {
+          console.log(`Customer not found in Shopify: ${memberEmail}`);
+          shopifyCancelled = true; // Customer not in Shopify = OK
+        }
+      } catch (shopifyErr) {
+        console.error('Shopify API error:', shopifyErr.message);
+        // Continue with Firebase update even if Shopify fails
+      }
+    }
+
+    // 3. Update Firebase
+    const now = new Date().toISOString().split('T')[0];
+    const accessUntil = member.nextPaymentDate || now;
+
+    await db.collection('members').doc(memberDocId).update({
+      status: 'cancelled',
+      cancelledAt: now,
+      accessUntil: accessUntil,
+      shopifyCancelled: shopifyCancelled,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`Member cancelled: ${memberEmail} | Shopify: ${shopifyCancelled} | Access until: ${accessUntil}`);
+
+    res.json({
+      success: true,
+      shopifyCancelled: shopifyCancelled,
+      accessUntil: accessUntil
+    });
+
+  } catch (err) {
+    console.error('Cancel error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
   res.json({
@@ -259,7 +404,8 @@ app.get('/', (req, res) => {
       'POST /webhooks/subscriptions/cancelled',
       'POST /webhooks/subscriptions/failed',
       'GET /api/member/:email',
-      'POST /api/link-member'
+      'POST /api/link-member',
+      'POST /api/cancel-subscription'
     ]
   });
 });
