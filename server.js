@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
-const nodemailer = require('nodemailer');
 
 // ===== FIREBASE INIT =====
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -11,31 +10,18 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
-// ===== EMAIL CONFIG =====
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'teccapitalweb@gmail.com';
-const EMAIL_USER = process.env.EMAIL_USER || '';
-const EMAIL_PASS = process.env.EMAIL_PASS || '';
-let transporter = null;
-if (EMAIL_USER && EMAIL_PASS) {
-  transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS }
-  });
-}
-
-// ===== HELPER: Send admin notification =====
-async function notifyAdmin(subject, html) {
-  if (!transporter) { console.log('Email not configured, skipping notification'); return; }
+// ===== HELPER: Save admin notification =====
+async function notifyAdmin(type, data) {
   try {
-    await transporter.sendMail({
-      from: `"Club FisioTeck" <${EMAIL_USER}>`,
-      to: ADMIN_EMAIL,
-      subject: subject,
-      html: html
+    await db.collection('notifications').add({
+      type: type,
+      ...data,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    console.log(`Admin notified: ${subject}`);
+    console.log(`Notification saved: ${type} - ${data.memberEmail || ''}`);
   } catch(e) {
-    console.error('Email error:', e.message);
+    console.error('Notification error:', e.message);
   }
 }
 
@@ -411,25 +397,14 @@ app.post('/api/cancel-subscription', async (req, res) => {
 
     console.log(`Member cancelled: ${memberEmail} | Shopify: ${shopifyCancelled} | Access until: ${accessUntil}`);
 
-    // Notify admin
-    const memberName = member.name || memberEmail;
-    await notifyAdmin(
-      `⚠️ Cancelación — ${memberName}`,
-      `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;">
-        <h2 style="color:#E53E3E;margin-bottom:16px;">⚠️ Cancelación de Membresía</h2>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;">
-          <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Miembro</td><td style="padding:8px;border-bottom:1px solid #eee;">${memberName}</td></tr>
-          <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Email</td><td style="padding:8px;border-bottom:1px solid #eee;">${memberEmail}</td></tr>
-          <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Plan</td><td style="padding:8px;border-bottom:1px solid #eee;">${member.plan || 'mensual'}</td></tr>
-          <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Acceso hasta</td><td style="padding:8px;border-bottom:1px solid #eee;">${accessUntil}</td></tr>
-          <tr><td style="padding:8px;font-weight:bold;">Fecha de cancelación</td><td style="padding:8px;">${now}</td></tr>
-        </table>
-        <div style="margin-top:20px;padding:14px;background:#FEF3C7;border-radius:8px;font-size:13px;color:#92400E;">
-          <strong>Acción requerida:</strong> Cancela el contrato de suscripción en Shopify.<br>
-          <a href="https://admin.shopify.com/store/pfueck-wm/apps/subscriptions-remix/app/contracts" style="color:#B45309;font-weight:bold;">Ir a Shopify → Subscriptions → Contratos</a>
-        </div>
-      </div>`
-    );
+    // Save notification for admin
+    await notifyAdmin('cancellation', {
+      memberName: member.name || memberEmail,
+      memberEmail: memberEmail,
+      plan: member.plan || 'mensual',
+      accessUntil: accessUntil,
+      cancelledAt: now
+    });
 
     res.json({
       success: true,
