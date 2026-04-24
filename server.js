@@ -24,6 +24,7 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'teccapitalweb@gmail.com';
 const EMAILJS_SERVICE_ID = 'service_s3q0xp7';
 const EMAILJS_TEMPLATE_ID = 'template_109lwi6';
 const EMAILJS_PUBLIC_KEY = 'iIBc65PznIzD84KgR';
+const EMAILJS_PRIVATE_KEY = '75xg9N1EQU1Cy2MEfK75k';
 
 async function sendEmailJS(toEmail, subject, htmlMessage) {
   try {
@@ -34,6 +35,7 @@ async function sendEmailJS(toEmail, subject, htmlMessage) {
         service_id: EMAILJS_SERVICE_ID,
         template_id: EMAILJS_TEMPLATE_ID,
         user_id: EMAILJS_PUBLIC_KEY,
+        accessToken: EMAILJS_PRIVATE_KEY,
         template_params: {
           to_email: toEmail,
           subject: subject,
