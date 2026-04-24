@@ -105,6 +105,7 @@ async function notifyAdmin(type, data) {
   try {
     await db.collection('notifications').add({
       type: type,
+      club: 'fisioteck',
       ...data,
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
