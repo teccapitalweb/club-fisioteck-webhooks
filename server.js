@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const crypto = require('crypto');
 const admin = require('firebase-admin');
+const Stripe = require('stripe');
 
 // ===== FIREBASE INIT =====
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -9,6 +9,14 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 const db = admin.firestore();
+
+// ===== STRIPE INIT =====
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+
+// Price IDs
+const PRICE_MENSUAL = process.env.STRIPE_PRICE_MENSUAL || 'price_1TPYw1PBgqsOPfUYOJBKrQiu';
+const PRICE_ANUAL = process.env.STRIPE_PRICE_ANUAL || 'price_1TPYxlPBgqsOPfUYsgjdFsVM';
 
 // ===== HELPER: Save admin notification =====
 async function notifyAdmin(type, data) {
@@ -28,25 +36,13 @@ async function notifyAdmin(type, data) {
 // ===== EXPRESS APP =====
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET || '';
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || '';
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'pfueck-wm.myshopify.com';
 
-// Raw body needed for Shopify webhook verification
-app.use('/webhooks', express.raw({ type: 'application/json' }));
+// IMPORTANT: Stripe webhook needs raw body BEFORE json parser
+app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
+// JSON parser for all other routes
 app.use(express.json());
 app.use(cors());
-
-// ===== VERIFY SHOPIFY WEBHOOK =====
-function verifyShopifyWebhook(req) {
-  if (!SHOPIFY_WEBHOOK_SECRET) return true; // Skip verification if no secret
-  const hmac = req.headers['x-shopify-hmac-sha256'];
-  if (!hmac) return false;
-  const hash = crypto.createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(req.body)
-    .digest('base64');
-  return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(hash));
-}
 
 // ===== HELPER: Find member by email =====
 async function findMemberByEmail(email) {
@@ -58,153 +54,326 @@ async function findMemberByEmail(email) {
   return { uid: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
-// ===== HELPER: Determine plan type =====
-function getPlanType(lineItems) {
-  for (const item of lineItems) {
-    const title = (item.title || '').toLowerCase();
-    if (title.includes('club fisioteck')) {
-      if (title.includes('anual') || title.includes('annual')) return 'anual';
-      if (title.includes('mensual') || title.includes('monthly')) return 'mensual';
-      return 'mensual';
-    }
-  }
+// ===== HELPER: Determine plan type from price ID =====
+function getPlanFromPrice(priceId) {
+  if (priceId === PRICE_ANUAL) return 'anual';
+  if (priceId === PRICE_MENSUAL) return 'mensual';
   return null;
 }
 
-// ===== WEBHOOK: Order Created / Paid =====
-app.post('/webhooks/orders/paid', async (req, res) => {
+// ===== API: Create Stripe Checkout Session (for embedded/popup) =====
+app.post('/api/create-checkout', async (req, res) => {
   try {
-    if (!verifyShopifyWebhook(req)) {
-      return res.status(401).send('Unauthorized');
-    }
-    const order = JSON.parse(req.body);
-    const email = (order.email || order.contact_email || '').toLowerCase();
-    const lineItems = order.line_items || [];
-    const planType = getPlanType(lineItems);
-
-    if (!email || !planType) {
-      console.log('Order not related to Club FisioTeck or no email:', email);
-      return res.status(200).send('OK - Not a Club order');
+    const { plan, email, uid } = req.body;
+    if (!plan || !email) {
+      return res.status(400).json({ error: 'Plan and email required' });
     }
 
-    console.log(`Payment received: ${email} - Plan: ${planType}`);
+    const priceId = plan === 'anual' ? PRICE_ANUAL : PRICE_MENSUAL;
 
-    // Find or prepare member data
-    const member = await findMemberByEmail(email);
-    const now = new Date().toISOString().split('T')[0];
-    const amount = planType === 'anual' ? 1999 : 249;
-    const nextDate = new Date();
-    if (planType === 'anual') {
-      nextDate.setFullYear(nextDate.getFullYear() + 1);
-    } else {
-      nextDate.setMonth(nextDate.getMonth() + 1);
-    }
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      customer_email: email,
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: {
+        firebaseUid: uid || '',
+        plan: plan
+      },
+      ui_mode: 'embedded',
+      return_url: 'https://club.fisioteck.com?session_id={CHECKOUT_SESSION_ID}',
+    });
 
-    const paymentRecord = {
-      date: now,
-      amount: amount,
-      currency: 'MXN',
-      concept: planType === 'anual' ? 'Membresía anual' : 'Membresía mensual',
-      status: 'paid',
-      orderId: order.id?.toString() || '',
-      paymentMethod: order.payment_gateway_names?.[0] || 'Shopify'
-    };
-
-    if (member) {
-      // Update existing member
-      await db.collection('members').doc(member.uid).update({
-        status: 'active',
-        plan: planType,
-        lastPaymentDate: now,
-        nextPaymentDate: nextDate.toISOString().split('T')[0],
-        paymentMethod: order.payment_gateway_names?.[0] || 'Shopify',
-        payments: admin.firestore.FieldValue.arrayUnion(paymentRecord),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`Member updated: ${email}`);
-    } else {
-      // Create pending member (will be linked when they register)
-      await db.collection('pending_members').doc(email).set({
-        email: email,
-        name: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim(),
-        phone: order.customer?.phone || '',
-        plan: planType,
-        status: 'active',
-        startDate: now,
-        lastPaymentDate: now,
-        nextPaymentDate: nextDate.toISOString().split('T')[0],
-        paymentMethod: order.payment_gateway_names?.[0] || 'Shopify',
-        payments: [paymentRecord],
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`Pending member created: ${email}`);
-    }
-
-    res.status(200).send('OK');
+    res.json({ clientSecret: session.client_secret });
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('Checkout error:', err.message);
+    res.status(500).json({ error: 'Error creating checkout session' });
+  }
+});
+
+// ===== API: Check session status (after payment) =====
+app.get('/api/checkout-status/:sessionId', async (req, res) => {
+  try {
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+    res.json({
+      status: session.status,
+      payment_status: session.payment_status,
+      customer_email: session.customer_email || session.customer_details?.email || ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error checking session' });
+  }
+});
+
+// ===== STRIPE WEBHOOK HANDLER =====
+async function handleStripeWebhook(req, res) {
+  let event;
+
+  // Verify webhook signature
+  try {
+    if (STRIPE_WEBHOOK_SECRET) {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        req.headers['stripe-signature'],
+        STRIPE_WEBHOOK_SECRET
+      );
+    } else {
+      event = JSON.parse(req.body);
+    }
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  console.log(`Stripe event received: ${event.type}`);
+
+  try {
+    switch (event.type) {
+
+      // ===== CHECKOUT COMPLETED (first payment) =====
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const email = (session.customer_email || session.customer_details?.email || '').toLowerCase();
+        const firebaseUid = session.metadata?.firebaseUid || '';
+        const planFromMeta = session.metadata?.plan || '';
+
+        if (!email) {
+          console.log('No email in checkout session');
+          break;
+        }
+
+        // Get subscription details
+        let planType = planFromMeta;
+        let subscriptionId = session.subscription || '';
+
+        if (subscriptionId && !planType) {
+          const sub = await stripe.subscriptions.retrieve(subscriptionId);
+          const priceId = sub.items?.data?.[0]?.price?.id || '';
+          planType = getPlanFromPrice(priceId) || 'mensual';
+        }
+        if (!planType) planType = 'mensual';
+
+        console.log(`Checkout completed: ${email} - Plan: ${planType}`);
+
+        const now = new Date().toISOString().split('T')[0];
+        const amount = planType === 'anual' ? 1999 : 249;
+        const nextDate = new Date();
+        if (planType === 'anual') {
+          nextDate.setFullYear(nextDate.getFullYear() + 1);
+        } else {
+          nextDate.setMonth(nextDate.getMonth() + 1);
+        }
+
+        const paymentRecord = {
+          date: now,
+          amount: amount,
+          currency: 'MXN',
+          concept: planType === 'anual' ? 'Membresía anual' : 'Membresía mensual',
+          status: 'paid',
+          stripeSessionId: session.id || '',
+          stripeSubscriptionId: subscriptionId,
+          paymentMethod: 'Stripe'
+        };
+
+        // Try to find member by UID first, then by email
+        let member = null;
+        if (firebaseUid) {
+          const doc = await db.collection('members').doc(firebaseUid).get();
+          if (doc.exists) {
+            member = { uid: firebaseUid, ...doc.data() };
+          }
+        }
+        if (!member) {
+          member = await findMemberByEmail(email);
+        }
+
+        if (member) {
+          await db.collection('members').doc(member.uid).update({
+            status: 'active',
+            plan: planType,
+            lastPaymentDate: now,
+            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            paymentMethod: 'Stripe',
+            stripeCustomerId: session.customer || '',
+            stripeSubscriptionId: subscriptionId,
+            payments: admin.firestore.FieldValue.arrayUnion(paymentRecord),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log(`Member updated: ${email}`);
+
+          await notifyAdmin('new_payment', {
+            memberName: member.name || email,
+            memberEmail: email,
+            plan: planType,
+            amount: amount
+          });
+        } else {
+          await db.collection('pending_members').doc(email).set({
+            email: email,
+            name: session.customer_details?.name || '',
+            plan: planType,
+            status: 'active',
+            startDate: now,
+            lastPaymentDate: now,
+            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            paymentMethod: 'Stripe',
+            stripeCustomerId: session.customer || '',
+            stripeSubscriptionId: subscriptionId,
+            payments: [paymentRecord],
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log(`Pending member created: ${email}`);
+
+          await notifyAdmin('new_payment', {
+            memberName: session.customer_details?.name || email,
+            memberEmail: email,
+            plan: planType,
+            amount: amount,
+            note: 'Pendiente de registro'
+          });
+        }
+        break;
+      }
+
+      // ===== INVOICE PAID (recurring payments) =====
+      case 'invoice.paid': {
+        const invoice = event.data.object;
+        const email = (invoice.customer_email || '').toLowerCase();
+        const subscriptionId = invoice.subscription || '';
+
+        if (!email || !subscriptionId) break;
+
+        if (invoice.billing_reason === 'subscription_create') {
+          console.log(`Skipping first invoice for ${email} (handled by checkout)`);
+          break;
+        }
+
+        console.log(`Recurring payment received: ${email}`);
+
+        let planType = 'mensual';
+        const priceId = invoice.lines?.data?.[0]?.price?.id || '';
+        if (priceId) {
+          planType = getPlanFromPrice(priceId) || 'mensual';
+        }
+
+        const now = new Date().toISOString().split('T')[0];
+        const amount = planType === 'anual' ? 1999 : 249;
+        const nextDate = new Date();
+        if (planType === 'anual') {
+          nextDate.setFullYear(nextDate.getFullYear() + 1);
+        } else {
+          nextDate.setMonth(nextDate.getMonth() + 1);
+        }
+
+        const paymentRecord = {
+          date: now,
+          amount: amount,
+          currency: 'MXN',
+          concept: planType === 'anual' ? 'Renovación anual' : 'Renovación mensual',
+          status: 'paid',
+          stripeInvoiceId: invoice.id || '',
+          stripeSubscriptionId: subscriptionId,
+          paymentMethod: 'Stripe'
+        };
+
+        const member = await findMemberByEmail(email);
+        if (member) {
+          await db.collection('members').doc(member.uid).update({
+            status: 'active',
+            lastPaymentDate: now,
+            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            payments: admin.firestore.FieldValue.arrayUnion(paymentRecord),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log(`Recurring payment recorded: ${email}`);
+
+          await notifyAdmin('renewal', {
+            memberName: member.name || email,
+            memberEmail: email,
+            plan: planType,
+            amount: amount
+          });
+        }
+        break;
+      }
+
+      // ===== SUBSCRIPTION CANCELLED =====
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object;
+        const stripeCustomerId = subscription.customer;
+
+        let email = '';
+        try {
+          const customer = await stripe.customers.retrieve(stripeCustomerId);
+          email = (customer.email || '').toLowerCase();
+        } catch(e) {
+          console.error('Error fetching customer:', e.message);
+        }
+
+        if (!email) break;
+
+        console.log(`Subscription cancelled: ${email}`);
+
+        const member = await findMemberByEmail(email);
+        if (member) {
+          const now = new Date().toISOString().split('T')[0];
+          const accessUntil = member.nextPaymentDate || now;
+
+          await db.collection('members').doc(member.uid).update({
+            status: 'cancelled',
+            cancelledAt: now,
+            accessUntil: accessUntil,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log(`Member cancelled: ${email}`);
+
+          await notifyAdmin('cancellation', {
+            memberName: member.name || email,
+            memberEmail: email,
+            plan: member.plan || 'mensual',
+            accessUntil: accessUntil,
+            cancelledAt: now
+          });
+        }
+        break;
+      }
+
+      // ===== PAYMENT FAILED =====
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const email = (invoice.customer_email || '').toLowerCase();
+
+        if (!email) break;
+
+        console.log(`Payment failed: ${email}`);
+
+        const member = await findMemberByEmail(email);
+        if (member) {
+          await db.collection('members').doc(member.uid).update({
+            status: 'inactive',
+            paymentFailedAt: new Date().toISOString().split('T')[0],
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+
+          await notifyAdmin('payment_failed', {
+            memberName: member.name || email,
+            memberEmail: email,
+            plan: member.plan || 'mensual'
+          });
+        }
+        break;
+      }
+
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Webhook processing error:', err);
     res.status(500).send('Error processing webhook');
   }
-});
-
-// ===== WEBHOOK: Subscription cancelled =====
-app.post('/webhooks/subscriptions/cancelled', async (req, res) => {
-  try {
-    if (!verifyShopifyWebhook(req)) {
-      return res.status(401).send('Unauthorized');
-    }
-    const data = JSON.parse(req.body);
-    const email = (data.email || data.customer_email || '').toLowerCase();
-
-    if (!email) return res.status(200).send('OK - No email');
-
-    console.log(`Subscription cancelled: ${email}`);
-
-    const member = await findMemberByEmail(email);
-    if (member) {
-      await db.collection('members').doc(member.uid).update({
-        status: 'inactive',
-        cancelledAt: new Date().toISOString().split('T')[0],
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`Member deactivated: ${email}`);
-    }
-
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error('Webhook error:', err);
-    res.status(500).send('Error');
-  }
-});
-
-// ===== WEBHOOK: Subscription payment failed =====
-app.post('/webhooks/subscriptions/failed', async (req, res) => {
-  try {
-    if (!verifyShopifyWebhook(req)) {
-      return res.status(401).send('Unauthorized');
-    }
-    const data = JSON.parse(req.body);
-    const email = (data.email || data.customer_email || '').toLowerCase();
-
-    if (!email) return res.status(200).send('OK');
-
-    console.log(`Payment failed: ${email}`);
-
-    const member = await findMemberByEmail(email);
-    if (member) {
-      await db.collection('members').doc(member.uid).update({
-        status: 'inactive',
-        paymentFailedAt: new Date().toISOString().split('T')[0],
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    }
-
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error('Webhook error:', err);
-    res.status(500).send('Error');
-  }
-});
+}
 
 // ===== API: Check member status (for Club site) =====
 app.get('/api/member/:email', async (req, res) => {
@@ -221,7 +390,6 @@ app.get('/api/member/:email', async (req, res) => {
         payments: member.payments || []
       });
     } else {
-      // Check pending members
       const pending = await db.collection('pending_members').doc(email).get();
       if (pending.exists) {
         res.json(pending.data());
@@ -243,7 +411,6 @@ app.post('/api/link-member', async (req, res) => {
     const pendingDoc = await db.collection('pending_members').doc(email.toLowerCase()).get();
     if (pendingDoc.exists) {
       const pendingData = pendingDoc.data();
-      // Update the member document with payment data
       await db.collection('members').doc(uid).update({
         status: pendingData.status || 'active',
         plan: pendingData.plan || 'mensual',
@@ -251,10 +418,11 @@ app.post('/api/link-member', async (req, res) => {
         lastPaymentDate: pendingData.lastPaymentDate || '',
         nextPaymentDate: pendingData.nextPaymentDate || '',
         paymentMethod: pendingData.paymentMethod || '',
+        stripeCustomerId: pendingData.stripeCustomerId || '',
+        stripeSubscriptionId: pendingData.stripeSubscriptionId || '',
         payments: pendingData.payments || [],
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      // Delete pending record
       await db.collection('pending_members').doc(email.toLowerCase()).delete();
       console.log(`Linked pending member: ${email} -> ${uid}`);
       res.json({ success: true });
@@ -272,7 +440,6 @@ app.post('/api/cancel-subscription', async (req, res) => {
     const { email, uid } = req.body;
     if (!email && !uid) return res.status(400).json({ error: 'Email or UID required' });
 
-    // 1. Find member in Firebase
     let member = null;
     let memberDocId = null;
 
@@ -298,92 +465,24 @@ app.post('/api/cancel-subscription', async (req, res) => {
     const memberEmail = (member.email || email || '').toLowerCase();
     console.log(`Cancel request from: ${memberEmail}`);
 
-    // 2. Find customer in Shopify by email
-    let shopifyCancelled = false;
-    if (SHOPIFY_ACCESS_TOKEN && memberEmail) {
+    // Cancel in Stripe
+    let stripeCancelled = false;
+    const subId = member.stripeSubscriptionId;
+    if (subId) {
       try {
-        // Search customer by email
-        const custRes = await fetch(
-          `https://${SHOPIFY_STORE}/admin/api/2024-01/customers/search.json?query=email:${encodeURIComponent(memberEmail)}`,
-          { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } }
-        );
-        const custData = await custRes.json();
-        const customer = custData.customers?.[0];
-
-        if (customer) {
-          // Use GraphQL to find and cancel subscription contracts
-          const graphqlRes = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`,
-            {
-              method: 'POST',
-              headers: {
-                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                query: `{
-                  subscriptionContracts(first: 10, query: "customer_id:${customer.id}") {
-                    edges {
-                      node {
-                        id
-                        status
-                      }
-                    }
-                  }
-                }`
-              })
-            }
-          );
-          const graphqlData = await graphqlRes.json();
-          const contracts = graphqlData.data?.subscriptionContracts?.edges || [];
-
-          // Cancel each active subscription
-          for (const edge of contracts) {
-            if (edge.node.status === 'ACTIVE') {
-              const cancelRes = await fetch(
-                `https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({
-                    query: `mutation {
-                      subscriptionContractCancel(subscriptionContractId: "${edge.node.id}") {
-                        contract { id status }
-                        userErrors { field message }
-                      }
-                    }`
-                  })
-                }
-              );
-              const cancelData = await cancelRes.json();
-              const errors = cancelData.data?.subscriptionContractCancel?.userErrors || [];
-              if (errors.length === 0) {
-                console.log(`Shopify subscription cancelled: ${edge.node.id}`);
-                shopifyCancelled = true;
-              } else {
-                console.log(`Shopify cancel error:`, errors);
-              }
-            }
-          }
-
-          if (contracts.length === 0) {
-            console.log(`No active subscriptions found in Shopify for ${memberEmail}`);
-            shopifyCancelled = true; // No subs to cancel = OK
-          }
-        } else {
-          console.log(`Customer not found in Shopify: ${memberEmail}`);
-          shopifyCancelled = true; // Customer not in Shopify = OK
+        await stripe.subscriptions.cancel(subId);
+        stripeCancelled = true;
+        console.log(`Stripe subscription cancelled: ${subId}`);
+      } catch (stripeErr) {
+        console.error('Stripe cancel error:', stripeErr.message);
+        if (stripeErr.code === 'resource_missing' || stripeErr.message.includes('cancel')) {
+          stripeCancelled = true;
         }
-      } catch (shopifyErr) {
-        console.error('Shopify API error:', shopifyErr.message);
-        // Continue with Firebase update even if Shopify fails
       }
+    } else {
+      stripeCancelled = true;
     }
 
-    // 3. Update Firebase
     const now = new Date().toISOString().split('T')[0];
     const accessUntil = member.nextPaymentDate || now;
 
@@ -391,13 +490,12 @@ app.post('/api/cancel-subscription', async (req, res) => {
       status: 'cancelled',
       cancelledAt: now,
       accessUntil: accessUntil,
-      shopifyCancelled: shopifyCancelled,
+      stripeCancelled: stripeCancelled,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    console.log(`Member cancelled: ${memberEmail} | Shopify: ${shopifyCancelled} | Access until: ${accessUntil}`);
+    console.log(`Member cancelled: ${memberEmail} | Stripe: ${stripeCancelled} | Access until: ${accessUntil}`);
 
-    // Save notification for admin
     await notifyAdmin('cancellation', {
       memberName: member.name || memberEmail,
       memberEmail: memberEmail,
@@ -408,7 +506,7 @@ app.post('/api/cancel-subscription', async (req, res) => {
 
     res.json({
       success: true,
-      shopifyCancelled: shopifyCancelled,
+      stripeCancelled: stripeCancelled,
       accessUntil: accessUntil
     });
 
@@ -422,11 +520,11 @@ app.post('/api/cancel-subscription', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'running',
-    service: 'Club FisioTeck Webhook Server',
+    service: 'Club FisioTeck Webhook Server (Stripe)',
     endpoints: [
-      'POST /webhooks/orders/paid',
-      'POST /webhooks/subscriptions/cancelled',
-      'POST /webhooks/subscriptions/failed',
+      'POST /webhooks/stripe',
+      'POST /api/create-checkout',
+      'GET /api/checkout-status/:sessionId',
       'GET /api/member/:email',
       'POST /api/link-member',
       'POST /api/cancel-subscription'
@@ -436,5 +534,5 @@ app.get('/', (req, res) => {
 
 // ===== START =====
 app.listen(PORT, () => {
-  console.log(`Club FisioTeck Webhook Server running on port ${PORT}`);
+  console.log(`Club FisioTeck Webhook Server (Stripe) running on port ${PORT}`);
 });
