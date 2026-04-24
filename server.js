@@ -207,6 +207,10 @@ async function handleStripeWebhook(req, res) {
 
   console.log(`Stripe event received: ${event.type}`);
 
+  // RESPOND IMMEDIATELY to Stripe (avoid timeout)
+  res.json({ received: true });
+
+  // Process in background
   try {
     switch (event.type) {
 
@@ -455,11 +459,8 @@ async function handleStripeWebhook(req, res) {
       default:
         console.log(`Unhandled event type: ${event.type}`);
     }
-
-    res.json({ received: true });
   } catch (err) {
     console.error('Webhook processing error:', err);
-    res.status(500).send('Error processing webhook');
   }
 }
 
