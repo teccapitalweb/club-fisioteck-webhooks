@@ -588,6 +588,46 @@ app.post('/api/cancel-subscription', async (req, res) => {
 
     console.log(`Member cancelled: ${memberEmail} | Stripe: ${stripeCancelled} | Access until: ${accessUntil}`);
 
+    // Send cancellation email to client
+    const cancelClientHtml = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#f8f9fa;border-radius:12px;overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#0B1A30,#37474F);padding:32px;text-align:center;">
+          <h1 style="color:#fff;margin:0;font-size:1.5rem;letter-spacing:2px;">CLUB FISIOTECK</h1>
+          <p style="color:rgba(255,255,255,.7);margin:8px 0 0;font-size:.9rem;">Tu membresía ha sido cancelada</p>
+        </div>
+        <div style="padding:28px 32px;">
+          <p style="font-size:1rem;color:#333;">Hola <strong>${member.name || 'Socio'}</strong>,</p>
+          <p style="color:#555;line-height:1.6;">Tu suscripción al Club FisioTeck ha sido cancelada exitosamente. No se realizarán más cobros.</p>
+          <div style="background:#FFF3E0;border:1px solid #FFE0B2;border-radius:8px;padding:16px;margin:20px 0;">
+            <p style="color:#E65100;font-weight:600;margin:0 0 4px;">📅 Acceso hasta: ${accessUntil}</p>
+            <p style="color:#BF360C;font-size:.85rem;margin:0;">Puedes seguir usando todos los beneficios del club hasta esa fecha.</p>
+          </div>
+          <p style="color:#555;line-height:1.6;">Si cambias de opinión, siempre puedes volver a suscribirte desde el club.</p>
+          <div style="text-align:center;margin:24px 0;">
+            <a href="https://club.fisioteck.com" style="display:inline-block;padding:14px 32px;background:#1565C0;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Volver al Club →</a>
+          </div>
+          <p style="color:#999;font-size:.8rem;text-align:center;">¡Gracias por haber sido parte del Club FisioTeck!</p>
+        </div>
+      </div>
+    `;
+    sendEmailJS(memberEmail, 'Tu membresía del Club FisioTeck ha sido cancelada', cancelClientHtml);
+
+    // Send cancellation email to admin
+    const cancelAdminHtml = `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#FFF3E0;border:1px solid #FFE0B2;border-radius:12px;padding:24px;">
+        <h2 style="color:#E65100;margin:0 0 16px;">⚠️ Cancelación de membresía</h2>
+        <table style="width:100%;border-collapse:collapse;">
+          <tr><td style="padding:8px 0;color:#666;width:120px;">Nombre:</td><td style="padding:8px 0;color:#333;font-weight:600;">${member.name || 'Sin nombre'}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Email:</td><td style="padding:8px 0;color:#333;">${memberEmail}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Plan:</td><td style="padding:8px 0;color:#333;font-weight:600;">${(member.plan || 'mensual') === 'anual' ? 'Anual' : 'Mensual'}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Acceso hasta:</td><td style="padding:8px 0;color:#E65100;font-weight:700;">${accessUntil}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Cancelado:</td><td style="padding:8px 0;color:#333;">${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Stripe:</td><td style="padding:8px 0;color:#333;">${stripeCancelled ? 'Cancelado ✅' : 'Pendiente ⚠️'}</td></tr>
+        </table>
+      </div>
+    `;
+    sendEmailJS(ADMIN_EMAIL, `⚠️ Cancelación: ${member.name || memberEmail} - ${(member.plan || 'mensual') === 'anual' ? 'Anual' : 'Mensual'}`, cancelAdminHtml);
+
     await notifyAdmin('cancellation', {
       memberName: member.name || memberEmail,
       memberEmail: memberEmail,
