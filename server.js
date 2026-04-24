@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
+const nodemailer = require('nodemailer');
 
 // ===== FIREBASE INIT =====
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -17,6 +18,85 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 // Price IDs
 const PRICE_MENSUAL = process.env.STRIPE_PRICE_MENSUAL || 'price_1TPYw1PBgqsOPfUYOJBKrQiu';
 const PRICE_ANUAL = process.env.STRIPE_PRICE_ANUAL || 'price_1TPYxlPBgqsOPfUYsgjdFsVM';
+
+// ===== EMAIL CONFIG =====
+const EMAIL_USER = process.env.EMAIL_USER || '';
+const EMAIL_PASS = process.env.EMAIL_PASS || '';
+const ADMIN_EMAIL = process.env.EMAIL_USER || '';
+
+let transporter = null;
+if (EMAIL_USER && EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: EMAIL_USER, pass: EMAIL_PASS }
+  });
+}
+
+async function sendEmailToClient(email, name, plan) {
+  if (!transporter) return;
+  const planLabel = plan === 'anual' ? 'Plan Anual ($1,999 MXN/año)' : 'Plan Mensual ($249 MXN/mes)';
+  try {
+    await transporter.sendMail({
+      from: `"Club FisioTeck" <${EMAIL_USER}>`,
+      to: email,
+      subject: '¡Bienvenido al Club FisioTeck! Tu membresía está activa 🎉',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#f8f9fa;border-radius:12px;overflow:hidden;">
+          <div style="background:linear-gradient(135deg,#0B1A30,#1565C0);padding:32px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:1.5rem;letter-spacing:2px;">CLUB FISIOTECK</h1>
+            <p style="color:rgba(255,255,255,.7);margin:8px 0 0;font-size:.9rem;">Tu membresía está activa</p>
+          </div>
+          <div style="padding:28px 32px;">
+            <p style="font-size:1rem;color:#333;">¡Hola <strong>${name || 'Socio'}</strong>! 👋</p>
+            <p style="color:#555;line-height:1.6;">Gracias por unirte al Club FisioTeck. Tu suscripción <strong>${planLabel}</strong> ya está activa.</p>
+            <p style="color:#555;line-height:1.6;">Ahora tienes acceso completo a:</p>
+            <ul style="color:#555;line-height:1.8;">
+              <li>📚 Todos los cursos grabados</li>
+              <li>🎓 Cursos en vivo y webinars</li>
+              <li>🛠️ Herramientas clínicas profesionales</li>
+              <li>💬 Foro exclusivo de la comunidad</li>
+              <li>📄 Biblioteca de PDFs y recursos</li>
+            </ul>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="https://club.fisioteck.com" style="display:inline-block;padding:14px 32px;background:#1565C0;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Ir al Club FisioTeck →</a>
+            </div>
+            <p style="color:#999;font-size:.8rem;text-align:center;">Si tienes dudas, contáctanos por WhatsApp.</p>
+          </div>
+        </div>
+      `
+    });
+    console.log(`Welcome email sent to: ${email}`);
+  } catch(e) {
+    console.error('Email to client error:', e.message);
+  }
+}
+
+async function sendEmailToAdmin(email, name, plan, amount) {
+  if (!transporter || !ADMIN_EMAIL) return;
+  try {
+    await transporter.sendMail({
+      from: `"Club FisioTeck" <${EMAIL_USER}>`,
+      to: ADMIN_EMAIL,
+      subject: `💰 Nuevo pago: ${name || email} - ${plan === 'anual' ? 'Anual' : 'Mensual'}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#f0f7ff;border:1px solid #d0e3f7;border-radius:12px;padding:24px;">
+          <h2 style="color:#1565C0;margin:0 0 16px;">💰 Nuevo pago recibido</h2>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr><td style="padding:8px 0;color:#666;width:120px;">Nombre:</td><td style="padding:8px 0;color:#333;font-weight:600;">${name || 'Sin nombre'}</td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Email:</td><td style="padding:8px 0;color:#333;">${email}</td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Plan:</td><td style="padding:8px 0;color:#333;font-weight:600;">${plan === 'anual' ? 'Anual' : 'Mensual'}</td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Monto:</td><td style="padding:8px 0;color:#1565C0;font-weight:700;font-size:1.1rem;">$${amount} MXN</td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Fecha:</td><td style="padding:8px 0;color:#333;">${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Método:</td><td style="padding:8px 0;color:#333;">Stripe</td></tr>
+          </table>
+        </div>
+      `
+    });
+    console.log(`Admin notification email sent for: ${email}`);
+  } catch(e) {
+    console.error('Email to admin error:', e.message);
+  }
+}
 
 // ===== HELPER: Save admin notification =====
 async function notifyAdmin(type, data) {
@@ -201,6 +281,10 @@ async function handleStripeWebhook(req, res) {
           });
           console.log(`Member updated: ${email}`);
 
+          // Send emails
+          await sendEmailToClient(email, member.name || '', planType);
+          await sendEmailToAdmin(email, member.name || email, planType, amount);
+
           await notifyAdmin('new_payment', {
             memberName: member.name || email,
             memberEmail: email,
@@ -223,6 +307,10 @@ async function handleStripeWebhook(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
           console.log(`Pending member created: ${email}`);
+
+          // Send emails
+          await sendEmailToClient(email, session.customer_details?.name || '', planType);
+          await sendEmailToAdmin(email, session.customer_details?.name || email, planType, amount);
 
           await notifyAdmin('new_payment', {
             memberName: session.customer_details?.name || email,
