@@ -420,15 +420,8 @@ async function handleStripeWebhook(req, res) {
             accessUntil: accessUntil,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
-          console.log(`Member cancelled: ${email}`);
-
-          await notifyAdmin('cancellation', {
-            memberName: member.name || email,
-            memberEmail: email,
-            plan: member.plan || 'mensual',
-            accessUntil: accessUntil,
-            cancelledAt: now
-          });
+          console.log(`Member cancelled via Stripe event: ${email}`);
+          // No notification here — already sent by /api/cancel-subscription
         }
         break;
       }
