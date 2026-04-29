@@ -641,6 +641,22 @@ app.post('/api/cancel-subscription', async (req, res) => {
   }
 });
 
+// ===== API: Fetch news from GNews =====
+const GNEWS_API_KEY = 'edc9eadf2e0c44020e7675fd1d6d2088';
+
+app.get('/api/news', async (req, res) => {
+  try {
+    const url = `https://gnews.io/api/v4/search?q=fisioterapia+OR+rehabilitaci%C3%B3n+OR+terapia+f%C3%ADsica&lang=es&country=mx&max=10&apikey=${GNEWS_API_KEY}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('GNews error: ' + response.status);
+    const data = await response.json();
+    res.json(data);
+  } catch(err) {
+    console.error('News fetch error:', err.message);
+    res.status(500).json({ error: 'Error fetching news' });
+  }
+});
+
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
   res.json({
