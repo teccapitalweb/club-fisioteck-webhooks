@@ -641,40 +641,47 @@ app.post('/api/cancel-subscription', async (req, res) => {
   }
 });
 
-// ===== API: Fetch news from GNews =====
-const GNEWS_API_KEY = 'edc9eadf2e0c44020e7675fd1d6d2088';
+// ===== API: Fetch news from NewsData.io =====
+const NEWSDATA_API_KEY = 'pub_0e241a225e664d0c8e13129875265f78';
 
 app.get('/api/news', async (req, res) => {
   try {
-    // Try multiple queries to get results
-    const queries = [
-      'fisioterapia+rehabilitación',
-      'salud+terapia+física',
-      'medicina+deportiva+rehabilitación'
-    ];
-    
-    let articles = [];
-    for (const q of queries) {
-      if (articles.length >= 10) break;
-      try {
-        const url = `https://gnews.io/api/v4/search?q=${q}&lang=es&max=10&apikey=${GNEWS_API_KEY}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.articles && data.articles.length > 0) {
-            articles = [...articles, ...data.articles];
-          }
+    const url = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=fisioterapia+OR+rehabilitación+OR+terapia+física&language=es&category=health&size=10`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('NewsData error: ' + response.status);
+    const data = await response.json();
+
+    if (!data.results || data.results.length === 0) {
+      // Fallback: broader health search
+      const url2 = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=salud+rehabilitación+medicina+deportiva&language=es&category=health&size=10`;
+      const res2 = await fetch(url2);
+      if (res2.ok) {
+        const data2 = await res2.json();
+        if (data2.results && data2.results.length > 0) {
+          const articles = data2.results.map(a => ({
+            title: a.title || '',
+            description: a.description || '',
+            content: a.content || '',
+            url: a.link || '',
+            image: a.image_url || null,
+            publishedAt: a.pubDate || '',
+            source: { name: a.source_name || 'Noticias' }
+          }));
+          return res.json({ articles });
         }
-      } catch(e) {}
+      }
+      return res.json({ articles: [] });
     }
 
-    // Remove duplicates by title
-    const seen = new Set();
-    articles = articles.filter(a => {
-      if (seen.has(a.title)) return false;
-      seen.add(a.title);
-      return true;
-    }).slice(0, 10);
+    const articles = data.results.map(a => ({
+      title: a.title || '',
+      description: a.description || '',
+      content: a.content || '',
+      url: a.link || '',
+      image: a.image_url || null,
+      publishedAt: a.pubDate || '',
+      source: { name: a.source_name || 'Noticias' }
+    }));
 
     res.json({ articles });
   } catch(err) {
