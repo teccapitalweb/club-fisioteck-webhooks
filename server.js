@@ -681,11 +681,20 @@ app.get('/api/news', async (req, res) => {
       source: { name: a.source_name || 'Noticias' }
     }));
 
-    // Update cache
-    newsCache = { articles, lastFetch: Date.now() };
-    console.log(`News fetched and cached: ${articles.length} articles`);
+    // Remove duplicates by title
+    const seen = new Set();
+    const uniqueArticles = articles.filter(a => {
+      const key = a.title.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
-    res.json({ articles });
+    // Update cache
+    newsCache = { articles: uniqueArticles, lastFetch: Date.now() };
+    console.log(`News fetched and cached: ${uniqueArticles.length} articles`);
+
+    res.json({ articles: uniqueArticles });
   } catch(err) {
     console.error('News fetch error:', err.message);
     // Return stale cache if available
