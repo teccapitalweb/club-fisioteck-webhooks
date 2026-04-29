@@ -646,11 +646,37 @@ const GNEWS_API_KEY = 'edc9eadf2e0c44020e7675fd1d6d2088';
 
 app.get('/api/news', async (req, res) => {
   try {
-    const url = `https://gnews.io/api/v4/search?q=fisioterapia+OR+rehabilitaci%C3%B3n+OR+terapia+f%C3%ADsica&lang=es&country=mx&max=10&apikey=${GNEWS_API_KEY}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('GNews error: ' + response.status);
-    const data = await response.json();
-    res.json(data);
+    // Try multiple queries to get results
+    const queries = [
+      'fisioterapia+rehabilitación',
+      'salud+terapia+física',
+      'medicina+deportiva+rehabilitación'
+    ];
+    
+    let articles = [];
+    for (const q of queries) {
+      if (articles.length >= 10) break;
+      try {
+        const url = `https://gnews.io/api/v4/search?q=${q}&lang=es&max=10&apikey=${GNEWS_API_KEY}`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.articles && data.articles.length > 0) {
+            articles = [...articles, ...data.articles];
+          }
+        }
+      } catch(e) {}
+    }
+
+    // Remove duplicates by title
+    const seen = new Set();
+    articles = articles.filter(a => {
+      if (seen.has(a.title)) return false;
+      seen.add(a.title);
+      return true;
+    }).slice(0, 10);
+
+    res.json({ articles });
   } catch(err) {
     console.error('News fetch error:', err.message);
     res.status(500).json({ error: 'Error fetching news' });
