@@ -641,39 +641,37 @@ app.post('/api/cancel-subscription', async (req, res) => {
   }
 });
 
-// ===== API: Fetch news from NewsData.io =====
+// ===== API: Fetch news from NewsData.io (with 6h cache) =====
 const NEWSDATA_API_KEY = 'pub_0e241a225e664d0c8e13129875265f78';
+let newsCache = { articles: [], lastFetch: 0 };
+const NEWS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
 app.get('/api/news', async (req, res) => {
   try {
+    // Return cache if still valid
+    if (newsCache.articles.length > 0 && (Date.now() - newsCache.lastFetch) < NEWS_CACHE_TTL) {
+      console.log('Serving cached news');
+      return res.json({ articles: newsCache.articles });
+    }
+
     const url = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=fisioterapia+OR+rehabilitación+OR+terapia+física&language=es&category=health&size=10`;
     const response = await fetch(url);
     if (!response.ok) throw new Error('NewsData error: ' + response.status);
     const data = await response.json();
 
-    if (!data.results || data.results.length === 0) {
+    let results = data.results || [];
+
+    if (results.length === 0) {
       // Fallback: broader health search
       const url2 = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=salud+rehabilitación+medicina+deportiva&language=es&category=health&size=10`;
       const res2 = await fetch(url2);
       if (res2.ok) {
         const data2 = await res2.json();
-        if (data2.results && data2.results.length > 0) {
-          const articles = data2.results.map(a => ({
-            title: a.title || '',
-            description: a.description || '',
-            content: a.content || '',
-            url: a.link || '',
-            image: a.image_url || null,
-            publishedAt: a.pubDate || '',
-            source: { name: a.source_name || 'Noticias' }
-          }));
-          return res.json({ articles });
-        }
+        results = data2.results || [];
       }
-      return res.json({ articles: [] });
     }
 
-    const articles = data.results.map(a => ({
+    const articles = results.map(a => ({
       title: a.title || '',
       description: a.description || '',
       content: a.content || '',
@@ -683,9 +681,17 @@ app.get('/api/news', async (req, res) => {
       source: { name: a.source_name || 'Noticias' }
     }));
 
+    // Update cache
+    newsCache = { articles, lastFetch: Date.now() };
+    console.log(`News fetched and cached: ${articles.length} articles`);
+
     res.json({ articles });
   } catch(err) {
     console.error('News fetch error:', err.message);
+    // Return stale cache if available
+    if (newsCache.articles.length > 0) {
+      return res.json({ articles: newsCache.articles });
+    }
     res.status(500).json({ error: 'Error fetching news' });
   }
 });
