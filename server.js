@@ -654,7 +654,7 @@ app.get('/api/news', async (req, res) => {
       return res.json({ articles: newsCache.articles });
     }
 
-    const url = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=fisioterapia+OR+rehabilitación+OR+terapia+física+OR+kinesiología+OR+ortopedia+OR+medicina+deportiva+OR+biomecánica&language=es&category=health&size=10`;
+    const url = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=fisioterapia OR rehabilitacion OR ortopedia&language=es&category=health&size=10`;
     const response = await fetch(url);
     if (!response.ok) throw new Error('NewsData error: ' + response.status);
     const data = await response.json();
@@ -663,7 +663,7 @@ app.get('/api/news', async (req, res) => {
 
     if (results.length === 0) {
       // Fallback: broader health search
-      const url2 = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=salud+rehabilitación+medicina+deportiva+lesiones+musculares+ejercicio+terapéutico&language=es&category=health&size=10`;
+      const url2 = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=medicina deportiva OR terapia fisica&language=es&category=health&size=10`;
       const res2 = await fetch(url2);
       if (res2.ok) {
         const data2 = await res2.json();
