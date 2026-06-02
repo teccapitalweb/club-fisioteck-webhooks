@@ -161,7 +161,8 @@ app.post('/api/create-checkout', async (req, res) => {
       line_items: [{ price: priceId, quantity: 1 }],
       metadata: {
         firebaseUid: uid || '',
-        plan: plan
+        plan: plan,
+        source: 'fisioteck-club'
       },
       ui_mode: 'embedded',
       return_url: 'https://club.fisioteck.com?session_id={CHECKOUT_SESSION_ID}',
@@ -220,6 +221,17 @@ async function handleStripeWebhook(req, res) {
       // ===== CHECKOUT COMPLETED (first payment) =====
       case 'checkout.session.completed': {
         const session = event.data.object;
+
+        // ⚠️ FILTRO MULTI-PROYECTO: esta cuenta Stripe es compartida por varios
+        // proyectos (IMDIIL, etc.). Si el pago trae un 'source' de OTRO proyecto,
+        // lo ignoramos. Los pagos de FisioTeck llevan source 'fisioteck-club'.
+        // (Pagos viejos sin source se siguen procesando para no romper nada.)
+        const src = session.metadata?.source || '';
+        if (src && src !== 'fisioteck-club') {
+          console.log(`Ignorado: pago de otro proyecto (source=${src})`);
+          break;
+        }
+
         const email = (session.customer_email || session.customer_details?.email || '').toLowerCase();
         const firebaseUid = session.metadata?.firebaseUid || '';
         const planFromMeta = session.metadata?.plan || '';
