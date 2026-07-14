@@ -138,6 +138,13 @@ async function findMemberByEmail(email) {
 }
 
 // ===== HELPER: Determine plan type from price ID =====
+// ⛔ Filtro multi-proyecto (2da capa): valida por price ID real, cubre casos
+// donde el otro club NO manda metadata.source (el filtro por source se salta
+// si "src" viene vacío) y también pagos únicos sin suscripción (cursos, etc).
+function isOwnPrice(priceId) {
+  return !!priceId && (priceId === PRICE_MENSUAL || priceId === PRICE_ANUAL);
+}
+
 function getPlanFromPrice(priceId) {
   if (priceId === PRICE_ANUAL) return 'anual';
   if (priceId === PRICE_MENSUAL) return 'mensual';
@@ -230,6 +237,26 @@ async function handleStripeWebhook(req, res) {
         if (src && src !== 'fisioteck-club') {
           console.log(`Ignorado: pago de otro proyecto (source=${src})`);
           break;
+        }
+
+        // ⛔ 2da capa: validar price real, cubre el caso de que el otro
+        // proyecto no mande source, o sea un pago único (mode:'payment',
+        // ej. venta de curso suelto) sin suscripción.
+        try {
+          let checkPriceId = null;
+          if (session.subscription) {
+            const subCheck = await stripe.subscriptions.retrieve(session.subscription);
+            checkPriceId = subCheck.items?.data?.[0]?.price?.id || null;
+          } else {
+            const items = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
+            checkPriceId = items?.data?.[0]?.price?.id || null;
+          }
+          if (!isOwnPrice(checkPriceId)) {
+            console.log(`Ignorado: price de otro proyecto/no es membresía FisioTeck (${checkPriceId})`);
+            break;
+          }
+        } catch (e) {
+          console.warn('No se pudo validar price, se continúa:', e.message);
         }
 
         const email = (session.customer_email || session.customer_details?.email || '').toLowerCase();
@@ -359,6 +386,16 @@ async function handleStripeWebhook(req, res) {
 
         let planType = 'mensual';
         const priceId = invoice.lines?.data?.[0]?.price?.id || '';
+
+        // ⛔ Filtro multi-proyecto: si el price de la renovación no es de
+        // FisioTeck, ignorar (protege el caso de un email compartido entre
+        // 2 clubes distintos). Si no viene priceId, no bloqueamos (mismo
+        // criterio conservador usado en el resto de los parches).
+        if (priceId && !isOwnPrice(priceId)) {
+          console.log(`Ignorado: renovación de otro proyecto (price=${priceId})`);
+          break;
+        }
+
         if (priceId) {
           planType = getPlanFromPrice(priceId) || 'mensual';
         }
