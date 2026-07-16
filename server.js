@@ -802,6 +802,105 @@ app.get('/api/news', async (req, res) => {
   }
 });
 
+// ===== API: Expirar miembros vencidos (barrida masiva) =====
+// Marca 'inactive' a todos los miembros cuyo periodo pagado ya venció.
+// Respeta la fecha real de cada usuario (Stripe: nextPaymentDate, legacy Shopify: startDate + período).
+// Puede ejecutarse manualmente o programarse en cron-job.org (recomendado: diario).
+//
+// Uso: POST /api/expire-inactive-members?token=XXX
+//   - Requiere ADMIN_TOKEN en Railway env vars para seguridad
+//   - ?dryRun=1 para probar sin escribir (solo devuelve lista)
+function calcularFechaVencimientoBackend(data) {
+  if (!data) return null;
+  const parseDate = (str) => {
+    if (!str) return null;
+    const d = new Date(str + 'T23:59:59');
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  if (data.accessUntil) return parseDate(data.accessUntil);
+  if (data.nextPaymentDate) return parseDate(data.nextPaymentDate);
+  if (data.startDate) {
+    const start = new Date(data.startDate + 'T00:00:00');
+    if (isNaN(start.getTime())) return null;
+    const plan = data.plan || 'mensual';
+    const venc = new Date(start);
+    if (plan === 'anual') venc.setFullYear(venc.getFullYear() + 1);
+    else venc.setMonth(venc.getMonth() + 1);
+    venc.setHours(23, 59, 59, 999);
+    return venc;
+  }
+  return null;
+}
+
+app.post('/api/expire-inactive-members', async (req, res) => {
+  try {
+    // Seguridad: exigir token admin
+    const providedToken = req.query.token || req.body?.token || '';
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+    if (!ADMIN_TOKEN || providedToken !== ADMIN_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized. Provide ?token=YOUR_ADMIN_TOKEN' });
+    }
+
+    const dryRun = req.query.dryRun === '1' || req.body?.dryRun === true;
+    const now = new Date();
+    const nowStr = now.toISOString().split('T')[0];
+
+    // Sólo revisar estatus que pueden vencer
+    const snapshot = await db.collection('members')
+      .where('status', 'in', ['active', 'paid', 'cancelled'])
+      .get();
+
+    const expired = [];
+    const kept = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const venc = calcularFechaVencimientoBackend(data);
+
+      if (venc && now > venc) {
+        expired.push({
+          uid: doc.id,
+          email: data.email || '',
+          name: data.name || '',
+          plan: data.plan || 'mensual',
+          previousStatus: data.status,
+          vencimiento: venc.toISOString().split('T')[0],
+          origen: data.nextPaymentDate ? 'stripe' : (data.startDate ? 'legacy' : 'accessUntil')
+        });
+
+        if (!dryRun) {
+          try {
+            await doc.ref.update({
+              status: 'inactive',
+              autoExpiredAt: nowStr,
+              autoExpiredFrom: data.status,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } catch (updErr) {
+            console.error(`Error expirando ${doc.id}:`, updErr.message);
+          }
+        }
+      } else {
+        kept.push({ uid: doc.id, email: data.email || '', vencimiento: venc ? venc.toISOString().split('T')[0] : 'sin-fecha' });
+      }
+    }
+
+    console.log(`[expire] ${dryRun ? 'DRY RUN' : 'APLICADO'}: ${expired.length} expirados, ${kept.length} vigentes`);
+
+    res.json({
+      dryRun: dryRun,
+      expiredCount: expired.length,
+      keptCount: kept.length,
+      expired: expired,
+      timestamp: now.toISOString()
+    });
+  } catch (err) {
+    console.error('Expire error:', err);
+    res.status(500).json({ error: 'Server error: ' + err.message });
+  }
+});
+
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
   res.json({
@@ -813,7 +912,8 @@ app.get('/', (req, res) => {
       'GET /api/checkout-status/:sessionId',
       'GET /api/member/:email',
       'POST /api/link-member',
-      'POST /api/cancel-subscription'
+      'POST /api/cancel-subscription',
+      'POST /api/expire-inactive-members (requiere ?token=)'
     ]
   });
 });
