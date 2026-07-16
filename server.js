@@ -151,17 +151,17 @@ function getPlanFromPrice(priceId) {
   return null;
 }
 
-// ===== API: Create Stripe Checkout Session (for embedded/popup) =====
+// ===== API: Create Stripe Checkout Session (soporta popup 'hosted' y 'embedded') =====
 app.post('/api/create-checkout', async (req, res) => {
   try {
-    const { plan, email, uid } = req.body;
+    const { plan, email, uid, mode } = req.body;
     if (!plan || !email) {
       return res.status(400).json({ error: 'Plan and email required' });
     }
 
     const priceId = plan === 'anual' ? PRICE_ANUAL : PRICE_MENSUAL;
 
-    const session = await stripe.checkout.sessions.create({
+    const sessionConfig = {
       mode: 'subscription',
       payment_method_types: ['card'],
       customer_email: email,
@@ -171,11 +171,32 @@ app.post('/api/create-checkout', async (req, res) => {
         plan: plan,
         source: 'fisioteck-club'
       },
-      ui_mode: 'embedded',
-      return_url: 'https://club.fisioteck.com?session_id={CHECKOUT_SESSION_ID}',
-    });
+      subscription_data: {
+        metadata: {
+          firebaseUid: uid || '',
+          plan: plan,
+          source: 'fisioteck-club'
+        }
+      }
+    };
 
-    res.json({ clientSecret: session.client_secret });
+    // 🆕 Modo POPUP (frontend nuevo con vigilarPago). El popup abre esta URL directa.
+    if (mode === 'hosted') {
+      sessionConfig.ui_mode = 'hosted';
+      sessionConfig.success_url = 'https://club.fisioteck.com/?session_id={CHECKOUT_SESSION_ID}';
+      sessionConfig.cancel_url = 'https://club.fisioteck.com/';
+    } else {
+      // Modo EMBEDDED (compatibilidad con frontend viejo)
+      sessionConfig.ui_mode = 'embedded';
+      sessionConfig.return_url = 'https://club.fisioteck.com?session_id={CHECKOUT_SESSION_ID}';
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionConfig);
+
+    res.json({
+      url: session.url || null,                   // frontend nuevo (popup)
+      clientSecret: session.client_secret || null // frontend viejo (embedded)
+    });
   } catch (err) {
     console.error('Checkout error:', err.message);
     res.status(500).json({ error: 'Error creating checkout session' });
@@ -446,6 +467,19 @@ async function handleStripeWebhook(req, res) {
         const subscription = event.data.object;
         const stripeCustomerId = subscription.customer;
 
+        // ⛔ Filtro multi-proyecto: si la sub cancelada no es de FisioTeck, ignorar.
+        // Sin este filtro, cancelar en otro club marca al miembro como cancelado aquí también.
+        const subPriceId = subscription.items?.data?.[0]?.price?.id || '';
+        const subSource = subscription.metadata?.source || '';
+        if (subSource && subSource !== 'fisioteck-club') {
+          console.log(`Ignorado (deleted): sub de otro proyecto (source=${subSource})`);
+          break;
+        }
+        if (subPriceId && !isOwnPrice(subPriceId)) {
+          console.log(`Ignorado (deleted): price de otro proyecto (${subPriceId})`);
+          break;
+        }
+
         let email = '';
         try {
           const customer = await stripe.customers.retrieve(stripeCustomerId);
@@ -460,6 +494,12 @@ async function handleStripeWebhook(req, res) {
 
         const member = await findMemberByEmail(email);
         if (member) {
+          // 🛡️ Guarda anti-stale: solo cancelar si la sub coincide con la guardada
+          if (member.stripeSubscriptionId && member.stripeSubscriptionId !== subscription.id) {
+            console.log(`Ignorado (deleted): sub.id ${subscription.id} no coincide con guardada ${member.stripeSubscriptionId}`);
+            break;
+          }
+
           const now = new Date().toISOString().split('T')[0];
           const accessUntil = member.nextPaymentDate || now;
 
@@ -481,6 +521,14 @@ async function handleStripeWebhook(req, res) {
         const email = (invoice.customer_email || '').toLowerCase();
 
         if (!email) break;
+
+        // ⛔ Filtro multi-proyecto: si el fallo es de otro club, ignorar.
+        // Sin este filtro, un fallo en otro club marca al miembro como inactive aquí.
+        const failedPriceId = invoice.lines?.data?.[0]?.price?.id || '';
+        if (failedPriceId && !isOwnPrice(failedPriceId)) {
+          console.log(`Ignorado (payment_failed): price de otro proyecto (${failedPriceId})`);
+          break;
+        }
 
         console.log(`Payment failed: ${email}`);
 
