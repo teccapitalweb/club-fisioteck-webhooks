@@ -14,9 +14,26 @@ const db = admin.firestore();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
-// Price IDs
+// Price IDs LEGACY — se conservan SOLO para reconocer suscripciones viejas
+// (creadas antes de los precios dinámicos) en los filtros multi-proyecto.
+// Los checkouts nuevos ya NO los usan: se arma price_data dinámico.
 const PRICE_MENSUAL = process.env.STRIPE_PRICE_MENSUAL || 'price_1TPYw1PBgqsOPfUYOJBKrQiu';
 const PRICE_ANUAL = process.env.STRIPE_PRICE_ANUAL || 'price_1TPYxlPBgqsOPfUYsgjdFsVM';
+
+// ===== PRECIOS DINÁMICOS desde Firestore (config/club) =====
+// El admin los edita en su panel → Configuración → Precios de la Membresía.
+async function leerPreciosConfig() {
+  try {
+    const snap = await db.collection('config').doc('club').get();
+    const c = snap.exists ? snap.data() : {};
+    const precioMes = Number(c.precioMes) > 0 ? Number(c.precioMes) : 249;
+    const precioAno = Number(c.precioAno) > 0 ? Number(c.precioAno) : 1999;
+    return { precioMes, precioAno };
+  } catch (e) {
+    console.error('Error leyendo precios config:', e.message);
+    return { precioMes: 249, precioAno: 1999 };
+  }
+}
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'teccapitalweb@gmail.com';
 
@@ -54,8 +71,13 @@ async function sendEmailJS(toEmail, subject, htmlMessage) {
   }
 }
 
-async function sendEmailToClient(email, name, plan) {
-  const planLabel = plan === 'anual' ? 'Plan Anual ($1,999 MXN/año)' : 'Plan Mensual ($249 MXN/mes)';
+async function sendEmailToClient(email, name, plan, amount) {
+  // Monto dinámico: usa el que realmente se cobró; si no llega, sin cifra (nunca un precio viejo fijo)
+  const _per = plan === 'anual' ? 'año' : 'mes';
+  const _lbl = plan === 'anual' ? 'Plan Anual' : 'Plan Mensual';
+  const planLabel = (typeof amount === 'number' && amount > 0)
+    ? `${_lbl} ($${amount.toLocaleString('es-MX')} MXN/${_per})`
+    : _lbl;
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#f8f9fa;border-radius:12px;overflow:hidden;">
       <div style="background:linear-gradient(135deg,#0B1A30,#1565C0);padding:32px;text-align:center;">
@@ -158,14 +180,35 @@ app.post('/api/create-checkout', async (req, res) => {
     if (!plan || !email) {
       return res.status(400).json({ error: 'Plan and email required' });
     }
+    if (!['mensual', 'anual'].includes(plan)) {
+      return res.status(400).json({ error: 'Plan inválido (mensual o anual)' });
+    }
 
-    const priceId = plan === 'anual' ? PRICE_ANUAL : PRICE_MENSUAL;
+    // ← PRECIO DINÁMICO: se lee de config/club en Firestore en cada checkout.
+    // Ya no se usan los Price IDs fijos de Stripe para checkouts nuevos.
+    const { precioMes, precioAno } = await leerPreciosConfig();
+    const montoMXN = plan === 'anual' ? precioAno : precioMes;
+
+    // Stripe rechaza cargos menores a $10 MXN — avisar claro
+    if (montoMXN < 10) {
+      return res.status(400).json({ error: 'El precio configurado ($' + montoMXN + ' MXN) es menor al mínimo de Stripe ($10 MXN). Revisa Configuración en el panel admin.' });
+    }
 
     const sessionConfig = {
       mode: 'subscription',
       payment_method_types: ['card'],
       customer_email: email,
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{
+        price_data: {
+          currency: 'mxn',
+          unit_amount: Math.round(montoMXN * 100),
+          recurring: { interval: plan === 'anual' ? 'year' : 'month' },
+          product_data: {
+            name: `Club FisioTeck · Plan ${plan === 'anual' ? 'Anual' : 'Mensual'}`
+          }
+        },
+        quantity: 1
+      }],
       metadata: {
         firebaseUid: uid || '',
         plan: plan,
@@ -260,24 +303,29 @@ async function handleStripeWebhook(req, res) {
           break;
         }
 
-        // ⛔ 2da capa: validar price real, cubre el caso de que el otro
-        // proyecto no mande source, o sea un pago único (mode:'payment',
-        // ej. venta de curso suelto) sin suscripción.
-        try {
-          let checkPriceId = null;
-          if (session.subscription) {
-            const subCheck = await stripe.subscriptions.retrieve(session.subscription);
-            checkPriceId = subCheck.items?.data?.[0]?.price?.id || null;
-          } else {
-            const items = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
-            checkPriceId = items?.data?.[0]?.price?.id || null;
+        // ⛔ 2da capa: validar price real — SOLO cuando NO viene source.
+        // Con precios dinámicos (price_data) el price ID es generado y no
+        // coincide con los legacy, pero nuestros checkouts SIEMPRE traen
+        // source='fisioteck-club' (pasan por la capa 1). Esta capa queda para
+        // pagos viejos sin source (price fijo legacy → pasa) y pagos de otros
+        // proyectos sin source (price ajeno → se ignora).
+        if (!src) {
+          try {
+            let checkPriceId = null;
+            if (session.subscription) {
+              const subCheck = await stripe.subscriptions.retrieve(session.subscription);
+              checkPriceId = subCheck.items?.data?.[0]?.price?.id || null;
+            } else {
+              const items = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
+              checkPriceId = items?.data?.[0]?.price?.id || null;
+            }
+            if (!isOwnPrice(checkPriceId)) {
+              console.log(`Ignorado: price de otro proyecto/no es membresía FisioTeck (${checkPriceId})`);
+              break;
+            }
+          } catch (e) {
+            console.warn('No se pudo validar price, se continúa:', e.message);
           }
-          if (!isOwnPrice(checkPriceId)) {
-            console.log(`Ignorado: price de otro proyecto/no es membresía FisioTeck (${checkPriceId})`);
-            break;
-          }
-        } catch (e) {
-          console.warn('No se pudo validar price, se continúa:', e.message);
         }
 
         const email = (session.customer_email || session.customer_details?.email || '').toLowerCase();
@@ -295,15 +343,27 @@ async function handleStripeWebhook(req, res) {
 
         if (subscriptionId && !planType) {
           const sub = await stripe.subscriptions.retrieve(subscriptionId);
-          const priceId = sub.items?.data?.[0]?.price?.id || '';
-          planType = getPlanFromPrice(priceId) || 'mensual';
+          // Con precios dinámicos el price ID no está en la lista legacy:
+          // primero metadata de la sub, luego el intervalo real, luego legacy.
+          planType = sub.metadata?.plan
+            || (sub.items?.data?.[0]?.price?.recurring?.interval === 'year' ? 'anual' : null)
+            || getPlanFromPrice(sub.items?.data?.[0]?.price?.id || '')
+            || 'mensual';
         }
         if (!planType) planType = 'mensual';
 
         console.log(`Checkout completed: ${email} - Plan: ${planType}`);
 
         const now = new Date().toISOString().split('T')[0];
-        const amount = planType === 'anual' ? 1999 : 249;
+        // Monto REAL cobrado (session.amount_total viene en centavos y siempre
+        // está presente en checkout.session.completed). Fallback: config actual.
+        let amount;
+        if (session.amount_total) {
+          amount = session.amount_total / 100;
+        } else {
+          const _cfg = await leerPreciosConfig();
+          amount = planType === 'anual' ? _cfg.precioAno : _cfg.precioMes;
+        }
         const nextDate = new Date();
         if (planType === 'anual') {
           nextDate.setFullYear(nextDate.getFullYear() + 1);
@@ -349,7 +409,7 @@ async function handleStripeWebhook(req, res) {
           console.log(`Member updated: ${email}`);
 
           // Send emails
-          await sendEmailToClient(email, member.name || '', planType);
+          await sendEmailToClient(email, member.name || '', planType, amount);
           await sendEmailToAdmin(email, member.name || email, planType, amount);
 
           await notifyAdmin('new_payment', {
@@ -376,7 +436,7 @@ async function handleStripeWebhook(req, res) {
           console.log(`Pending member created: ${email}`);
 
           // Send emails
-          await sendEmailToClient(email, session.customer_details?.name || '', planType);
+          await sendEmailToClient(email, session.customer_details?.name || '', planType, amount);
           await sendEmailToAdmin(email, session.customer_details?.name || email, planType, amount);
 
           await notifyAdmin('new_payment', {
@@ -407,22 +467,43 @@ async function handleStripeWebhook(req, res) {
 
         let planType = 'mensual';
         const priceId = invoice.lines?.data?.[0]?.price?.id || '';
+        const lineInterval = invoice.lines?.data?.[0]?.price?.recurring?.interval || '';
 
-        // ⛔ Filtro multi-proyecto: si el price de la renovación no es de
-        // FisioTeck, ignorar (protege el caso de un email compartido entre
-        // 2 clubes distintos). Si no viene priceId, no bloqueamos (mismo
-        // criterio conservador usado en el resto de los parches).
-        if (priceId && !isOwnPrice(priceId)) {
+        // ⛔ Filtro multi-proyecto: con precios dinámicos el price ID ya no es
+        // fijo, así que la identidad se valida por metadata.source de la
+        // SUSCRIPCIÓN (nuestros checkouts la graban siempre). El check de price
+        // legacy queda solo como fallback para subs viejas sin metadata.
+        let subMeta = {};
+        try {
+          const subForMeta = await stripe.subscriptions.retrieve(subscriptionId);
+          subMeta = subForMeta.metadata || {};
+        } catch (e) {
+          console.warn('No se pudo leer metadata de la sub:', e.message);
+        }
+        if (subMeta.source && subMeta.source !== 'fisioteck-club') {
+          console.log(`Ignorado: renovación de otro proyecto (source=${subMeta.source})`);
+          break;
+        }
+        if (!subMeta.source && priceId && !isOwnPrice(priceId)) {
           console.log(`Ignorado: renovación de otro proyecto (price=${priceId})`);
           break;
         }
 
-        if (priceId) {
-          planType = getPlanFromPrice(priceId) || 'mensual';
-        }
+        // Plan: metadata → intervalo real → price legacy → default
+        planType = subMeta.plan
+          || (lineInterval === 'year' ? 'anual' : (lineInterval === 'month' ? 'mensual' : null))
+          || (priceId ? getPlanFromPrice(priceId) : null)
+          || 'mensual';
 
         const now = new Date().toISOString().split('T')[0];
-        const amount = planType === 'anual' ? 1999 : 249;
+        // Monto REAL cobrado en la renovación (invoice.amount_paid en centavos).
+        let amount;
+        if (invoice.amount_paid) {
+          amount = invoice.amount_paid / 100;
+        } else {
+          const _cfg = await leerPreciosConfig();
+          amount = planType === 'anual' ? _cfg.precioAno : _cfg.precioMes;
+        }
         const nextDate = new Date();
         if (planType === 'anual') {
           nextDate.setFullYear(nextDate.getFullYear() + 1);
@@ -475,7 +556,10 @@ async function handleStripeWebhook(req, res) {
           console.log(`Ignorado (deleted): sub de otro proyecto (source=${subSource})`);
           break;
         }
-        if (subPriceId && !isOwnPrice(subPriceId)) {
+        // Check de price legacy SOLO si la sub no trae source (subs viejas):
+        // las subs nuevas con precio dinámico traen source='fisioteck-club'
+        // pero un price ID generado que no está en la lista legacy.
+        if (!subSource && subPriceId && !isOwnPrice(subPriceId)) {
           console.log(`Ignorado (deleted): price de otro proyecto (${subPriceId})`);
           break;
         }
@@ -523,9 +607,21 @@ async function handleStripeWebhook(req, res) {
         if (!email) break;
 
         // ⛔ Filtro multi-proyecto: si el fallo es de otro club, ignorar.
-        // Sin este filtro, un fallo en otro club marca al miembro como inactive aquí.
+        // Identidad por metadata.source de la suscripción (precios dinámicos);
+        // el check de price legacy queda como fallback para subs sin metadata.
         const failedPriceId = invoice.lines?.data?.[0]?.price?.id || '';
-        if (failedPriceId && !isOwnPrice(failedPriceId)) {
+        let failedSubMeta = {};
+        if (invoice.subscription) {
+          try {
+            const failedSub = await stripe.subscriptions.retrieve(invoice.subscription);
+            failedSubMeta = failedSub.metadata || {};
+          } catch (e) { /* si no se puede leer, caemos al check por price */ }
+        }
+        if (failedSubMeta.source && failedSubMeta.source !== 'fisioteck-club') {
+          console.log(`Ignorado (payment_failed): sub de otro proyecto (source=${failedSubMeta.source})`);
+          break;
+        }
+        if (!failedSubMeta.source && failedPriceId && !isOwnPrice(failedPriceId)) {
           console.log(`Ignorado (payment_failed): price de otro proyecto (${failedPriceId})`);
           break;
         }
