@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // ===== FIREBASE INIT =====
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -38,12 +41,16 @@ async function leerPreciosConfig() {
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'teccapitalweb@gmail.com';
 
 // ===== EMAILJS CONFIG =====
-const EMAILJS_SERVICE_ID = 'service_s3q0xp7';
-const EMAILJS_TEMPLATE_ID = 'template_109lwi6';
-const EMAILJS_PUBLIC_KEY = 'iIBc65PznIzD84KgR';
-const EMAILJS_PRIVATE_KEY = '75xg9N1EQU1Cy2MEfK75k';
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || '';
+const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || '';
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '';
+const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || '';
 
 async function sendEmailJS(toEmail, subject, htmlMessage) {
+  if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
+    console.warn('EmailJS no está configurado; se omite el correo saliente.');
+    return;
+  }
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
       method: 'POST',
@@ -148,6 +155,82 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleSt
 // JSON parser for all other routes
 app.use(express.json());
 app.use(cors());
+
+// ===== BUNNY STREAM: catálogo y reproducción firmada =====
+const BUNNY_CATALOG_PATH = path.join(__dirname, 'data', 'bunny-catalog.json');
+const BUNNY_STREAM_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID || '';
+const BUNNY_STREAM_TOKEN_KEY = process.env.BUNNY_STREAM_TOKEN_KEY || '';
+const BUNNY_STREAM_PLAYER_HOST = (process.env.BUNNY_STREAM_PLAYER_HOST || 'https://iframe.mediadelivery.net').replace(/\/$/, '');
+const BUNNY_PLAYBACK_TTL_SECONDS = Math.max(60, Math.min(Number(process.env.BUNNY_PLAYBACK_TTL_SECONDS) || 900, 3600));
+
+function loadBunnyCatalog() {
+  if (!fs.existsSync(BUNNY_CATALOG_PATH)) return { libraryId: '', courses: [] };
+  return JSON.parse(fs.readFileSync(BUNNY_CATALOG_PATH, 'utf8'));
+}
+
+function findCatalogLesson(catalog, courseId, lessonId) {
+  const course = (catalog.courses || []).find(item => String(item.courseId) === String(courseId));
+  if (!course) return null;
+  const lesson = (course.lessons || []).find(item => String(item.lessonId) === String(lessonId));
+  return lesson ? { course, lesson } : null;
+}
+
+async function requireFirebaseUser(req, res, next) {
+  try {
+    const authorization = req.get('authorization') || '';
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!match) return res.status(401).json({ error: 'Inicia sesión para reproducir esta clase.' });
+    req.firebaseUser = await admin.auth().verifyIdToken(match[1]);
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Tu sesión no es válida o expiró.' });
+  }
+}
+
+function memberHasPremiumAccess(member) {
+  if (!member || !['active', 'paid', 'cancelled'].includes(member.status)) return false;
+  const rawExpiry = member.accessUntil || member.nextPaymentDate;
+  if (!rawExpiry) return member.status === 'active' || member.status === 'paid';
+  const expiry = rawExpiry.toDate ? rawExpiry.toDate() : new Date(String(rawExpiry).length === 10 ? rawExpiry + 'T23:59:59' : rawExpiry);
+  return !Number.isNaN(expiry.getTime()) && expiry >= new Date();
+}
+
+app.post('/api/video-playback', requireFirebaseUser, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.body || {};
+    if (courseId === undefined || lessonId === undefined) {
+      return res.status(400).json({ error: 'courseId y lessonId son obligatorios.' });
+    }
+
+    const catalog = loadBunnyCatalog();
+    const entry = findCatalogLesson(catalog, courseId, lessonId);
+    if (!entry) return res.status(404).json({ error: 'La clase no existe en el catálogo de video.' });
+
+    const memberDoc = await db.collection('members').doc(req.firebaseUser.uid).get();
+    if (!memberDoc.exists) return res.status(403).json({ error: 'Completa tu registro gratuito para continuar.' });
+
+    const isPreview = entry.lesson.isPreview === true;
+    if (!isPreview && !memberHasPremiumAccess(memberDoc.data())) {
+      return res.status(402).json({ error: 'Esta clase se desbloquea con la membresía.' });
+    }
+
+    const libraryId = BUNNY_STREAM_LIBRARY_ID || catalog.libraryId || '';
+    const videoId = entry.lesson.bunnyVideoId || '';
+    if (!libraryId || !BUNNY_STREAM_TOKEN_KEY) {
+      return res.status(503).json({ error: 'Bunny Stream todavía no está configurado en el servidor.' });
+    }
+    if (!videoId) return res.status(409).json({ error: 'Este video está pendiente de migración a Bunny.' });
+
+    const expires = Math.floor(Date.now() / 1000) + BUNNY_PLAYBACK_TTL_SECONDS;
+    const token = crypto.createHash('sha256').update(BUNNY_STREAM_TOKEN_KEY + videoId + expires).digest('hex');
+    const embedUrl = `${BUNNY_STREAM_PLAYER_HOST}/embed/${encodeURIComponent(libraryId)}/${encodeURIComponent(videoId)}?token=${token}&expires=${expires}&autoplay=true`;
+    res.set('Cache-Control', 'no-store');
+    return res.json({ embedUrl, expiresAt: new Date(expires * 1000).toISOString(), preview: isPreview });
+  } catch (error) {
+    console.error('Bunny playback error:', error.message);
+    return res.status(500).json({ error: 'No se pudo preparar la reproducción.' });
+  }
+});
 
 // ===== HELPER: Find member by email =====
 async function findMemberByEmail(email) {
@@ -1009,6 +1092,7 @@ app.get('/', (req, res) => {
       'GET /api/member/:email',
       'POST /api/link-member',
       'POST /api/cancel-subscription',
+      'POST /api/video-playback (requiere Firebase ID token)',
       'POST /api/expire-inactive-members (requiere ?token=)'
     ]
   });
