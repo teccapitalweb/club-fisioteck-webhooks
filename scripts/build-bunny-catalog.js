@@ -19,17 +19,18 @@ for (const course of previous.courses || []) {
 const catalog = {
   version: 1,
   generatedAt: new Date().toISOString(),
-  libraryId: previous.libraryId || '',
+  libraryId: String(source.bunnyStream?.libraryId || previous.libraryId || ''),
   courses: (source.courses || []).map(course => ({
     courseId: course.id,
     title: String(course.title || '').trim(),
+    collectionId: course.bunnyCollectionId || '',
     lessons: (course.lessons || []).map((lesson, index) => ({
       lessonId: lesson.id,
       title: String(lesson.title || '').trim(),
       index,
-      isPreview: index === 0,
-      sourceUrl: lesson.videoUrl || '',
-      bunnyVideoId: previousVideos.get(`${course.id}:${lesson.id}`) || ''
+      isPreview: lesson.isPreview === true || index === 0,
+      videoProvider: lesson.videoProvider || (lesson.bunnyVideoId ? 'bunny' : 'drive'),
+      bunnyVideoId: lesson.bunnyVideoId || previousVideos.get(`${course.id}:${lesson.id}`) || ''
     }))
   }))
 };

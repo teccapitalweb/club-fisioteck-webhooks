@@ -5,12 +5,17 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build:bunny-catalog": "node scripts/build-bunny-catalog.js"
+    "build:bunny-catalog": "node scripts/build-bunny-catalog.js",
+    "bunny:audit": "node scripts/upload-fisioteck-bunny.js --dry-run",
+    "bunny:upload": "node scripts/upload-fisioteck-bunny.js --upload",
+    "bunny:verify": "node scripts/upload-fisioteck-bunny.js --verify",
+    "bunny:sync-site": "node scripts/sync-fisioteck-site.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
     "firebase-admin": "^12.0.0",
-    "cors": "^2.8.5",
-    "stripe": "^14.0.0"
+    "stripe": "^14.0.0",
+    "tus-js-client": "^4.3.1"
   }
 }
