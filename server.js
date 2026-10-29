@@ -457,6 +457,21 @@ app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, r
   }
 });
 
+// ===== API: Portal de facturación de Stripe (método de pago, facturas) — como «Gestionar en Stripe» de Alintec =====
+app.post('/api/billing-portal', requireFirebaseUser, limitarPago, async (req, res) => {
+  try {
+    const m = (await db.collection('members').doc(req.firebaseUser.uid).get()).data() || {};
+    let customer = m.stripeCustomerId || '';
+    if (!customer && m.stripeSubscriptionId) { try { customer = (await stripe.subscriptions.retrieve(m.stripeSubscriptionId)).customer || ''; } catch (_) { customer = ''; } }
+    if (!customer) return res.status(404).json({ error: 'Todavía no tienes una suscripción de pago con tarjeta.' });
+    const ses = await stripe.billingPortal.sessions.create({ customer, return_url: 'https://club.fisioteck.com/' });
+    res.json({ url: ses.url });
+  } catch (err) {
+    console.error('Billing portal error:', err.message);
+    res.status(500).json({ error: 'El portal de Stripe todavía no está activado. Escríbenos y lo resolvemos.' });
+  }
+});
+
 // ===== API: Check session status (after payment) =====
 app.get('/api/checkout-status/:sessionId', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
