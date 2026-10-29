@@ -1262,6 +1262,7 @@ setInterval(() => datosCuriosos.revisarEnvio().catch(e => console.warn('Datos cu
 require('./services/logros').montarRutasLogros(app, depsAcceso); // XP, racha, insignias, reto del día y flashcards: los calcula el servidor
 require('./services/materiales').montarRutasMateriales(app, depsAcceso); // materiales de curso (por clase) y materiales libres, con enlaces privados
 require('./services/quiz').montarRutasQuiz(app, depsAcceso); // preguntas de clase: la respuesta correcta solo la conoce el servidor
+require('./services/juegos').montarRutasJuegos(app, depsAcceso); // juegos dinámicos de clase: solo se entregan a quien tiene acceso al curso
 depsAcceso.refrescarMaterialesLibres().catch(e => console.error('materialesLibres:', e.message));
 setInterval(() => depsAcceso.refrescarMaterialesLibres().catch(() => {}), 60000).unref();
 require('./services/rutas-publico').montarRutasPublico(app, depsAcceso); // encuesta de la portada, guía sin respuesta y visitas

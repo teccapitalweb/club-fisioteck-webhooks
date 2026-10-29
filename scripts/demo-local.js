@@ -132,6 +132,14 @@ datos.set('directorioContacto/dir2', { uid: 'dir2', whatsapp: '5512345678' });
 datos.set('forum_posts/p-demo', { authorId: 'vip-demo', title: 'Dolor de hombro en nadadora: ¿por dónde empiezo?', body: 'Paciente de 24 años...' });
 datos.set('forum_posts/p-demo/replies/r-demo', { authorId: 'beto-demo', authorName: 'Beto R.', body: 'Yo empezaría con control escapular y educación del dolor antes de la cápsula posterior.' });
 datos.set('certificados/demo1', { uid: 'dir1', revocado: false });
+// Juegos de clase de ejemplo (solo demo) en el curso «Estimulación neuroplástica…»: una clase por tipo de juego, más preguntas en la clase 1
+datos.set('juegosCurso/1777912123479', { courseId: '1777912123479', clases: {
+  0: { tipo: 'sopa_letras', datos: { palabras: ['NEURONA', 'SINAPSIS', 'CORTEZA', 'REFLEJO', 'AXON', 'MIELINA'] } },
+  1: { tipo: 'memorama', datos: { pares: [{ termino: 'Neuroplasticidad', definicion: 'Capacidad del cerebro de reorganizarse' }, { termino: 'Sinapsis', definicion: 'Unión entre dos neuronas' }, { termino: 'Corteza motora', definicion: 'Área que planea el movimiento voluntario' }, { termino: 'Mielina', definicion: 'Capa que acelera el impulso nervioso' }] } },
+  2: { tipo: 'rompecabezas', datos: { dificultad: '3', imagenUrl: '' } },
+  3: { tipo: 'ahorcado', datos: { palabras: [{ palabra: 'Plasticidad', pista: 'Cambio adaptativo del sistema nervioso' }, { palabra: 'Bobath', pista: 'Concepto de neurorrehabilitación' }] } }
+} });
+datos.set('preguntasCurso/1777912123479', { courseId: '1777912123479', clases: { 0: [{ tipo: 'multiple', pregunta: '¿Qué es la neuroplasticidad?', opciones: ['Un tipo de fractura', 'La capacidad de reorganización del sistema nervioso', 'Un fármaco'], correcta: 1 }, { tipo: 'vof', pregunta: 'La sinapsis une dos neuronas.', correcta: 0 }] } });
 console.log('');
 console.log('  MODO DEMO LOCAL · servidor del Club en http://localhost:' + process.env.PORT);
 console.log('  Firebase y Stripe simulados: los datos viven en memoria y se borran al cerrar. Plan de tu cuenta: ' + ((process.env.DEMO_PLAN || 'active') === 'free' ? 'cuenta gratuita' : 'miembro activo'));
