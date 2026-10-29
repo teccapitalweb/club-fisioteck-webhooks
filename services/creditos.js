@@ -161,7 +161,7 @@ function montarRutasCreditos(app, deps) {
     const ahora = Date.now();
     for (const x of sn.docs.map(y => y.data()).sort((a, b) => (b.creadoMs || 0) - (a.creadoMs || 0))) {
       const yaCanjeo = (await db.collection(COL_CUPONES).doc(x.clave).collection('canjes').doc(d.uid).get()).exists;
-      if (!evaluarCupon(x, { membresia, ahora, yaCanjeo })) return res.json({ hay: true, creditos: x.creditos, venceMs: x.venceMs || null });
+      if (!evaluarCupon({ ...x, maxUsos: 0 }, { membresia, ahora, yaCanjeo })) return res.json({ hay: true, creditos: x.creditos, venceMs: x.venceMs || null, agotado: !!(x.maxUsos && (x.usos || 0) >= x.maxUsos) });
     }
     res.json({ hay: false });
   }));
@@ -175,10 +175,10 @@ function montarRutasCreditos(app, deps) {
     const libres = [];
     for (const x of sn.docs.map(y => y.data())) {
       const yaCanjeo = (await db.collection(COL_CUPONES).doc(x.clave).collection('canjes').doc(d.uid).get()).exists;
-      if (!evaluarCupon(x, { membresia, ahora, yaCanjeo })) libres.push(x);
+      if (!evaluarCupon({ ...x, maxUsos: 0 }, { membresia, ahora, yaCanjeo })) libres.push(x);
     }
     if (!libres.length) return res.json({ hay: false });
-    res.json({ hay: true, cantidad: libres.length, creditos: Math.max(...libres.map(x => x.creditos || 0)), limitado: libres.some(x => x.maxUsos || x.venceMs), ids: libres.map(x => String(x.creadoMs || 0)) });
+    res.json({ hay: true, cantidad: libres.length, creditos: Math.max(...libres.map(x => x.creditos || 0)), limitado: libres.some(x => x.maxUsos || x.venceMs), agotado: libres.every(x => x.maxUsos && (x.usos || 0) >= x.maxUsos), ids: libres.map(x => String(x.creadoMs || 0)) });
   }));
 
   app.post('/api/creditos/cupon', envolver('cupon', false, async (req, res, d) => {

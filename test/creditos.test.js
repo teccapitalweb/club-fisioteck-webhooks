@@ -174,6 +174,8 @@ test('aviso "Hay un cupón para ti" y tarjeta "Lo sentimos" cuando se agotó', a
     assert.equal((await s.llamar('/api/creditos/cupon', { clave: 'LIMITE1' })).status, 200);
     const tarde = await s.llamar('/api/creditos/cupon', { clave: 'LIMITE1' }, 'socio');
     assert.equal(tarde.status, 410); assert.equal(tarde.cuerpo.codigo, 'cupon-agotado'); assert.equal(tarde.cuerpo.limite, 1);
-    assert.equal((await s.llamar('/api/creditos/cupon-disponible', null, 'socio')).cuerpo.hay, false); // ya está agotado
+    // Agotado para otros, pero la tarjeta SIGUE saliendo a quien aún no lo canjea (así ve que la dinámica es real); quien ya lo canjeó ya no la ve
+    const aunSale = (await s.llamar('/api/creditos/cupon-disponible', null, 'socio')).cuerpo; assert.equal(aunSale.hay, true); assert.equal(aunSale.agotado, true);
+    assert.equal((await s.llamar('/api/creditos/cupon-disponible')).cuerpo.hay, false);
   } finally { s.cerrar(); }
 });
