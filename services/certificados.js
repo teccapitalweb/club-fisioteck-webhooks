@@ -124,7 +124,7 @@ function montarRutasCertificados(app, deps) {
   // ----- Emisión automática al terminar un curso (como Alintec Food) -----
   // Se emite con el nombre del perfil si ya sirve como nombre completo; si no, devuelve requiereNombre y la persona lo escribe.
   // confirmarNombre = es el PRIMER certificado de la cuenta y aún no se confirmó el nombre: el Club pregunta "¿tu certificado debe llevar este nombre?".
-  async function emitirAuto({ uid, email, curso, nombreCandidato }) {
+  async function emitirAuto({ uid, email, curso, nombreCandidato, sinCorreo }) {
     if (!llave()) return { sinLlave: true };
     const previo = await col().doc(folioCertificado(uid, curso.courseId)).get();
     const miembro = (await db.collection('members').doc(uid).get()).data() || {};
@@ -135,7 +135,7 @@ function montarRutasCertificados(app, deps) {
     if (!v.ok) return { requiereNombre: true, confirmarNombre: false };
     const cert = construirCertificado({ uid, curso, nombre: v.nombre, email, origen: 'club' }, llave());
     await col().doc(cert.folio).set(cert);
-    if (deps.enviarCorreoCertificado) Promise.resolve().then(() => deps.enviarCorreoCertificado(cert)).catch(e => console.warn('[certificados] correo:', e && e.message));
+    if (deps.enviarCorreoCertificado && !sinCorreo) Promise.resolve().then(() => deps.enviarCorreoCertificado(cert)).catch(e => console.warn('[certificados] correo:', e && e.message));
     return { certificado: certificadoPublico(cert), nuevo: true, confirmarNombre };
   }
   deps.emitirCertificadoAuto = emitirAuto;
@@ -160,6 +160,16 @@ function montarRutasCertificados(app, deps) {
 
   // ----- Socio -----
   app.get('/api/certificados/mios', conSesion(async (req, res, d) => {
+    // Cursos que la persona ya terminó antes de que existieran los certificados automáticos (miembros antiguos): se emiten ahora, sin correo.
+    if (llave()) {
+      try {
+        const prog = await leerProgreso(d.uid), miembro = (await db.collection('members').doc(d.uid).get()).data() || {};
+        for (const curso of (deps.cargarCatalogo().courses || [])) {
+          const total = (curso.lessons || []).length;
+          if (total > 0 && clasesCompletadas(prog, curso.courseId, total) >= total) await emitirAuto({ uid: d.uid, email: d.email, curso, nombreCandidato: miembro.name || d.name, sinCorreo: true });
+        }
+      } catch (e) { console.warn('[certificados] retroactivos:', e && e.message); }
+    }
     const sn = await col().where('uid', '==', d.uid).get();
     const lista = sn.docs.map(x => x.data()).filter(c => !c.revocado).sort((a, b) => String(b.emitidoEn).localeCompare(String(a.emitidoEn)));
     res.json({ certificados: lista.map(certificadoPublico) });
