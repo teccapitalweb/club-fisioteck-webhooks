@@ -53,11 +53,15 @@ function fechaDe(v) {
   return isNaN(d) ? null : d;
 }
 
-// Primer día de membresía: el primer PAGO (no la creación de la cuenta). Sin pagos registrados: el último pago, la activación del administrador o el regalo;
-// la fecha de alta de la cuenta es el último recurso.
+// Primer día de membresía = fecha de referencia para el calendario Y para saber si el miembro es ANTIGUO (anterior a la fecha en que se encendió el escalonado):
+//  1) el primer PAGO registrado (no la creación de la cuenta);
+//  2) sin pagos registrados: la activación del administrador, el regalo o el inicio de membresía;
+//  3) sin nada de eso (miembros muy antiguos): la fecha más vieja entre su último pago y el alta de la cuenta, para que NUNCA se tome por nuevo a quien ya
+//     era miembro y solo tiene un cobro reciente de renovación.
 function inicioMembresia(m) {
-  const fechas = (Array.isArray(m.payments) ? m.payments : []).map(p => fechaDe(p && p.date)).filter(Boolean).sort((a, b) => a - b);
-  return fechas[0] || fechaDe(m.lastPaymentDate) || fechaDe(m.activadoEn) || fechaDe(m.giftedAt) || fechaDe(m.membresiaInicio) || fechaDe(m.startDate) || null;
+  const menor = lista => { const f = lista.map(fechaDe).filter(Boolean).sort((x, y) => x - y); return f[0] || null; };
+  const pagos = menor((Array.isArray(m.payments) ? m.payments : []).map(p => p && p.date));
+  return pagos || menor([m.activadoEn, m.giftedAt, m.membresiaInicio]) || menor([m.lastPaymentDate, m.startDate]);
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).

@@ -221,3 +221,25 @@ test('modo historia: se supera con 3 de 4, los mundos van en orden y el XP se da
     assert.equal(r2.cuerpo.nuevo, true); assert.equal(r2.cuerpo.xp, 10);
   } finally { s.cerrar(); }
 });
+
+// ---- Miembros antiguos: conservan todo lo que tenían, sea cual sea el formato de su ficha ----
+test('un miembro antiguo SIN lista de pagos pero con un cobro reciente de renovación sigue siendo antiguo (todo abierto)', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' };
+  const legado = { status: 'active', startDate: '2026-01-15', lastPaymentDate: '2026-10-25' }; // alta en enero, renovó la semana pasada
+  const a = calcularAcceso({ miembro: legado, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 28)) });
+  assert.equal(a.escalonado, false); assert.equal(abiertos(a).length, 4);
+});
+
+test('antiguos con distintos formatos de ficha: todos conservan todo abierto; el nuevo que paga después sí sigue la regla', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' }, ahora = new Date(Date.UTC(2026, 9, 28));
+  const antiguos = [
+    { status: 'active', payments: [{ date: '2026-03-02' }, { date: '2026-10-02' }] },
+    { status: 'active', startDate: '2026-02-10' },
+    { status: 'active', activadoEn: '2026-05-05', startDate: '2026-04-01' },
+    { status: 'active', giftedAt: '2026-06-01' },
+    { status: 'cancelled', payments: [{ date: '2026-07-01' }], accessUntil: '2026-11-30' }
+  ];
+  antiguos.forEach(m => { const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora }); assert.equal(a.escalonado, false, JSON.stringify(m)); assert.equal(abiertos(a).length, 4); });
+  const nuevo = calcularAcceso({ miembro: { status: 'active', startDate: '2026-02-10', payments: [{ date: '2026-10-24' }] }, catalogo, cfg: cfgDesde, ahora });
+  assert.equal(nuevo.escalonado, true); assert.equal(nuevo.diaMembresia, 5); assert.equal(abiertos(nuevo).length, 1);
+});
