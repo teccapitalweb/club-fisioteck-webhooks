@@ -201,7 +201,13 @@ test('detective: se supera con el 75 % de los errores y pocas marcas de más; el
     const bien = await s.llamar('/api/retos/completar', { retoId: 'd-sala', tipo: 'detective', marcas: [sobre(0), sobre(1), sobre(2), sobre(3)] });
     assert.equal(bien.cuerpo.supera, true); assert.equal(bien.cuerpo.nuevo, true); assert.equal(bien.cuerpo.xp, 10);
     const otra = await s.llamar('/api/retos/completar', { retoId: 'd-higiene', tipo: 'detective', marcas: [{ x: claves.detective['d-higiene'][0].x, y: claves.detective['d-higiene'][0].y }] });
-    assert.equal(otra.cuerpo.supera, false); assert.equal(otra.cuerpo.faltan.length, 3);
+    const intento = () => s.llamar('/api/retos/completar', { retoId: 'd-higiene', tipo: 'detective', marcas: [{ x: claves.detective['d-higiene'][0].x, y: claves.detective['d-higiene'][0].y }] });
+    assert.equal(otra.cuerpo.supera, false); assert.equal(otra.cuerpo.faltan.length, 0, 'el primer intento no revela dónde estaban');
+    assert.equal(otra.cuerpo.intentosRestantes, 2); assert.equal(otra.cuerpo.aciertos.length, 1, 'sí dice cuáles marcas estaban bien');
+    assert.equal((await intento()).cuerpo.faltan.length, 0);
+    const tercero = (await intento()).cuerpo;
+    assert.equal(tercero.faltan.length, 3, 'al tercer intento fallido se muestran los que faltaron'); assert.equal(tercero.revelado, true);
+    assert.equal((await intento()).cuerpo.faltan.length, 0, 'después de revelar, vuelve a contar desde cero');
     assert.equal((await s.llamar('/api/retos/completar', { retoId: 'no-existe', tipo: 'detective', marcas: [] })).status, 400);
   } finally { s.cerrar(); }
 });

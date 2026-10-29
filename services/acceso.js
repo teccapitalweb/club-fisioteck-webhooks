@@ -123,6 +123,7 @@ function calificarOrden(totalPasos, orden) {
 
 // XP de un reto superado (una sola vez por reto): 6 XP, o 10 si es perfecto (como Alintec y Zoorigen); "ordena" siempre es perfecto al superarse.
 const XP_RETO = 6, XP_RETO_PERFECTO = 10;
+const INTENTOS_PARA_REVELAR = 3;
 function xpDeRetoSuperado(tipo, ok, total, det) {
   const perfecto = tipo === 'orden' || (tipo === 'detective' ? !!(det && det.perfecto) : total > 0 && ok === total);
   return perfecto ? XP_RETO_PERFECTO : XP_RETO;
@@ -252,8 +253,19 @@ function montarRutasAcceso(app, deps) {
         previos[retoId].mejor = ok;
         await refRetos(d.uid).set({ superados: previos }, { merge: true });
       }
+      // Detective: los lugares correctos que faltaron NO se muestran de inmediato; solo después de INTENTOS_PARA_REVELAR intentos sin superarlo (como Alintec)
+      let revelar = false, intentosRestantes = 0;
+      if (det) {
+        const doc = (await refRetos(d.uid).get()), intentos = { ...(doc.exists ? ((doc.data() || {}).intentos || {}) : {}) };
+        if (supera) { if (intentos[retoId]) { delete intentos[retoId]; await refRetos(d.uid).set({ intentos }, { merge: true }); } }
+        else {
+          intentos[retoId] = (Number(intentos[retoId]) || 0) + 1;
+          if (intentos[retoId] >= INTENTOS_PARA_REVELAR) { revelar = true; delete intentos[retoId]; } else intentosRestantes = INTENTOS_PARA_REVELAR - intentos[retoId];
+          await refRetos(d.uid).set({ intentos }, { merge: true });
+        }
+      }
       const { acceso } = await evaluar(d.uid, d);
-      res.json({ ...(det ? { aciertos: det.aciertos, sobran: det.sobran, faltan: det.faltan } : {}), supera, nuevo, xp: nuevo ? previos[retoId].xp : 0, ok, total, retosSuperados: Object.keys(previos).length, adelantos: acceso.adelantos || 0, retosParaSiguiente: acceso.retosParaSiguiente || null, adelanto: acceso.adelanto || null, escalonado: !!acceso.escalonado });
+      res.json({ ...(det ? { aciertos: det.aciertos, sobran: det.sobran, faltan: revelar ? det.faltan : [], faltanCuantos: det.faltan.length, revelado: revelar, intentosRestantes } : {}), supera, nuevo, xp: nuevo ? previos[retoId].xp : 0, ok, total, retosSuperados: Object.keys(previos).length, adelantos: acceso.adelantos || 0, retosParaSiguiente: acceso.retosParaSiguiente || null, adelanto: acceso.adelanto || null, escalonado: !!acceso.escalonado });
     } catch (e) { console.error('[retos] completar', e.message); res.status(500).json({ error: 'No se pudo registrar tu reto.' }); }
   });
 }

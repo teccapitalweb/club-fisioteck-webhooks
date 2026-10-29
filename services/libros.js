@@ -90,6 +90,12 @@ function montarRutasLibros(app, deps) {
     const existentes = new Set((await db.collection(COL).get()).docs.map(d => d.id));
     let n = 0;
     for (const l of base) if (!existentes.has(l.id)) { const { id, ...resto } = l; await db.collection(COL).doc(id).set({ ...resto, base: true, creadoEn: marca() }); n++; }
+    // Como Alintec, cada libro pide más retos que el anterior (5, 10, 15…). Una sola vez, y solo si el administrador no había cambiado el 10 original.
+    for (const l of base) {
+      if (!existentes.has(l.id)) continue;
+      const ref = db.collection(COL).doc(l.id), s = await ref.get(), d = s.exists ? (s.data() || {}) : {};
+      if (d.base === true && !d.umbralEscalonado) await ref.set(d.requiereRetos === 10 ? { requiereRetos: l.requiereRetos, umbralEscalonado: true } : { umbralEscalonado: true }, { merge: true });
+    }
     return n;
   }
   deps.sembrarLibros = sembrar;
