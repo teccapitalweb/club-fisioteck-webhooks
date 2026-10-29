@@ -3,6 +3,7 @@
 //   GET  /api/admin/bunny-catalogo   colecciones y videos de la biblioteca de Bunny Stream (nunca devuelve la llave)
 //   POST /api/admin/catalogo-curso   registra las clases de un curso creado o editado en el panel, para que se pueda reproducir
 //   GET  /api/admin/estado           semáforo de servicios (servidor, base de datos, Stripe, Bunny, correos, certificados…)
+const crypto = require('crypto');
 const { esAdminPorToken } = require('./certificados');
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -89,6 +90,33 @@ function montarRutasAdminExtra(app, deps) {
   }
 
   const cacheCatalogo = { datos: null, t: 0 };
+  // Con la biblioteca configurada, firma un enlace con BUNNY_STREAM_TOKEN_KEY y lo abre como lo hace el Club (con su dirección como referer).
+  // Así el panel dice la causa exacta cuando los miembros ven «403» en el reproductor.
+  async function probarReproduccion() {
+    try {
+      const cat = deps.cargarCatalogo ? deps.cargarCatalogo() : null;
+      let guid = '';
+      ((cat && cat.courses) || []).some(c => (c.lessons || []).some(l => { if (l.bunnyVideoId) { guid = l.bunnyVideoId; return true; } return false; }));
+      if (!guid) return { estado: 'aviso', detalle: 'El catálogo del servidor no tiene videos de Bunny para probar.' };
+      const lib = biblioteca(), libCat = String((cat && cat.libraryId) || '');
+      try { await bunnyGet('/videos/' + encodeURIComponent(guid)); }
+      catch (e) {
+        if (/ 404/.test(String(e && e.message))) return { estado: 'error', detalle: 'El video de prueba no existe en la biblioteca ' + lib + (libCat && libCat !== lib ? ' (el catálogo del servidor usa la biblioteca ' + libCat + ')' : '') + '. Revisa BUNNY_STREAM_LIBRARY_ID: debe ser la biblioteca donde están los cursos.' };
+        return { estado: 'aviso', detalle: 'No se pudo consultar el video de prueba: ' + String(e && e.message).slice(0, 80) };
+      }
+      const host = String(env.BUNNY_STREAM_PLAYER_HOST || 'https://iframe.mediadelivery.net').replace(/\/$/, '');
+      const expires = Math.floor(Date.now() / 1000) + 300;
+      const token = crypto.createHash('sha256').update(String(env.BUNNY_STREAM_TOKEN_KEY) + guid + expires).digest('hex');
+      const club = String(env.CLUB_URL || 'https://club.fisioteck.com').replace(/\/+$/, '');
+      const r = await llamar(host + '/embed/' + encodeURIComponent(lib) + '/' + encodeURIComponent(guid) + '?token=' + token + '&expires=' + expires, { headers: { Referer: club + '/' } });
+      const html = String(await r.text()).slice(0, 4000);
+      if (!r.ok || /<title>\s*40[0-9]/i.test(html)) {
+        return { estado: 'error', detalle: 'Bunny rechaza el enlace firmado (' + (/<title>\s*(\d+)/i.exec(html) || [0, r.status])[1] + '), por eso los miembros ven «403». Causas: 1) BUNNY_STREAM_TOKEN_KEY no es la «Token Authentication Key» de la biblioteca ' + lib + ' (Bunny → Stream → esa biblioteca → Security); 2) en esa misma pantalla, «Allowed Domains» no incluye ' + club.replace(/^https?:\/\//, '') + '.' };
+      }
+      return { estado: 'ok', detalle: 'Bunny acepta el enlace firmado: los videos se abren para los miembros.' };
+    } catch (e) { return { estado: 'aviso', detalle: 'No se pudo hacer la prueba: ' + String(e && e.message).slice(0, 80) }; }
+  }
+
   app.get('/api/admin/bunny-catalogo', soloAdmin(async (req, res) => {
     if (!biblioteca() || !llaveApi()) return res.status(503).json({ error: 'Bunny todavía no está configurado en el servidor (BUNNY_STREAM_LIBRARY_ID y BUNNY_STREAM_API_KEY).' });
     // Lo último que salió bien se recuerda 5 minutos; si Bunny falla se usa el catálogo guardado en el servidor para que el panel no se quede sin él
@@ -142,6 +170,9 @@ function montarRutasAdminExtra(app, deps) {
     } else {
       try { await bunnyGet('/collections?page=1&itemsPerPage=1'); agrega('bunny', 'Videos de los cursos (Bunny)', 'ok', 'La biblioteca responde.'); }
       catch (e) { agrega('bunny', 'Videos de los cursos (Bunny)', 'error', 'No respondió: ' + String(e && e.message).slice(0, 80)); }
+      // Prueba REAL de reproducción: firma un enlace igual al que reciben los miembros y le pregunta a Bunny si lo acepta
+      const r = await probarReproduccion();
+      agrega('bunny-reproduccion', 'Reproducción de videos (prueba real)', r.estado, r.detalle);
     }
     // Los correos del Club salen por Resend (dominio propio); EmailJS es solo el respaldo antiguo
     const resend = Boolean(String(env.RESEND_API_KEY || '').trim() && String(env.MAIL_FROM || '').trim());

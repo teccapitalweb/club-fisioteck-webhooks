@@ -114,3 +114,35 @@ test('Bunny: sin catálogo guardado y con Bunny caído responde el error real', 
   const s = await levantar({ env: { BUNNY_STREAM_LIBRARY_ID: '123', BUNNY_STREAM_API_KEY: 'k' }, fetchFalso: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
   try { const r = await s.llamar('/api/admin/bunny-catalogo'); assert.equal(r.status, 502); assert.match(r.cuerpo.error, /401/); } finally { s.cerrar(); }
 });
+
+// ---- Prueba real de reproducción en el semáforo ----
+const ENV_BUNNY = { BUNNY_STREAM_LIBRARY_ID: '111', BUNNY_STREAM_API_KEY: 'api', BUNNY_STREAM_TOKEN_KEY: 'token-secreto', STRIPE_SECRET_KEY: 'sk', CERT_SIGNING_KEY: 'k' };
+const CATALOGO = { libraryId: '999', courses: [{ title: 'C', lessons: [{ title: 'Sesión 01', bunnyVideoId: G1 }] }] };
+const resp = (ok, status, cuerpo) => ({ ok, status, json: async () => cuerpo || {}, text: async () => (typeof cuerpo === 'string' ? cuerpo : '') });
+async function reproduccion(fetchFalso) {
+  const s = await levantar({ env: ENV_BUNNY, fetchFalso, cargarCatalogo: () => CATALOGO });
+  try { const r = await s.llamar('/api/admin/estado'); return r.cuerpo.servicios.find(x => x.id === 'bunny-reproduccion'); } finally { s.cerrar(); }
+}
+
+test('reproducción: Bunny acepta el enlace firmado -> ok, y se firma con la llave del servidor y el referer del Club', async () => {
+  const visto = [];
+  const fetchFalso = async (url, o) => { visto.push({ url, referer: o && o.headers && o.headers.Referer }); if (/iframe\.mediadelivery\.net/.test(url)) return resp(true, 200, '<html><title>Reproductor</title></html>'); return resp(true, 200, { items: [] }); };
+  const x = await reproduccion(fetchFalso);
+  assert.equal(x.estado, 'ok');
+  const embed = visto.find(v => /iframe\.mediadelivery\.net/.test(v.url));
+  assert.match(embed.url, /\/embed\/111\/58fa738a-ed77-44be-95be-29c81407366e\?token=[0-9a-f]{64}&expires=\d+/);
+  assert.equal(embed.referer, 'https://club.fisioteck.com/');
+});
+
+test('reproducción: Bunny responde 403 -> error con las causas (llave de token y dominios permitidos)', async () => {
+  const fetchFalso = async url => /iframe\.mediadelivery\.net/.test(url) ? resp(true, 200, '<html><title>403</title></html>') : resp(true, 200, { items: [] });
+  const x = await reproduccion(fetchFalso);
+  assert.equal(x.estado, 'error'); assert.match(x.detalle, /403/); assert.match(x.detalle, /BUNNY_STREAM_TOKEN_KEY/); assert.match(x.detalle, /Allowed Domains/);
+  assert.equal(JSON.stringify(x).includes('token-secreto'), false);
+});
+
+test('reproducción: el video no existe en la biblioteca configurada -> error que nombra las dos bibliotecas', async () => {
+  const fetchFalso = async url => /\/videos\//.test(url) ? resp(false, 404, {}) : resp(true, 200, { items: [] });
+  const x = await reproduccion(fetchFalso);
+  assert.equal(x.estado, 'error'); assert.match(x.detalle, /biblioteca 111/); assert.match(x.detalle, /999/); assert.match(x.detalle, /BUNNY_STREAM_LIBRARY_ID/);
+});
