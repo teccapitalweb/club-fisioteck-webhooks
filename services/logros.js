@@ -145,7 +145,8 @@ function montarRutasLogros(app, deps) {
       const total = (c.lessons || []).length, hechas = clasesCompletadas(progreso || {}, c.courseId, total);
       totalLessons += hechas; if (total > 0 && hechas >= total) completedCourses++;
     });
-    const superados = (retos && retos.superados) || {};
+    let superados = (retos && retos.superados) || {};
+    if (deps.leerRetosSuperados && !(retos && retos.heredado)) { try { superados = await deps.leerRetosSuperados(uid); } catch (_) { /* se queda con lo que había */ } }
     const st = doc.stats || {};
     let invitadosValidos = 0;
     try { if (deps.referidosValidosDe) invitadosValidos = Number(await deps.referidosValidosDe(uid)) || 0; } catch (_) { /* sin referidos */ }

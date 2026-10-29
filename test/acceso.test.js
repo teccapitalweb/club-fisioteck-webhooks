@@ -243,3 +243,19 @@ test('antiguos con distintos formatos de ficha: todos conservan todo abierto; el
   const nuevo = calcularAcceso({ miembro: { status: 'active', startDate: '2026-02-10', payments: [{ date: '2026-10-24' }] }, catalogo, cfg: cfgDesde, ahora });
   assert.equal(nuevo.escalonado, true); assert.equal(nuevo.diaMembresia, 5); assert.equal(abiertos(nuevo).length, 1);
 });
+
+test('los retos que ya tenía en el sistema anterior se pasan una sola vez y cuentan (sin repetir su XP)', async () => {
+  const ids = Object.keys(claves.quiz).slice(0, 2);
+  const semilla = base();
+  semilla['members/u1/progress/achievements'] = { retos: { xp: 40, hechos: { [ids[0]]: { fecha: '2026-09-01', mejor: 5, total: 6 }, [ids[1]]: { fecha: '2026-09-02', mejor: 6, total: 6 }, 'q-no-existe': { mejor: 3, total: 3 } } } };
+  const s = await levantar(semilla);
+  try {
+    const r = (await s.llamar('/api/acceso')).cuerpo;
+    assert.equal(r.retosSuperados, 2, 'los dos retos válidos cuentan y el que no existe no');
+    assert.equal(r.adelanto.porTipo.quiz, 2);
+    const guardado = s.db.datos.get('members/u1/progress/retos');
+    assert.equal(guardado.heredado, true);
+    assert.equal(guardado.superados[ids[0]].xp, 0, 'el XP ya viene en xpHeredado: no se cuenta dos veces');
+    assert.equal((await s.llamar('/api/acceso')).cuerpo.retosSuperados, 2, 'la segunda vez no cambia nada');
+  } finally { s.cerrar(); }
+});

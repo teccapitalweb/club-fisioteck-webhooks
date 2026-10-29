@@ -151,7 +151,26 @@ function montarRutasAcceso(app, deps) {
     catch (_) { res.status(401).json({ error: 'Tu sesión no es válida o expiró.' }); return null; }
   }
   const refRetos = uid => db.collection('members').doc(uid).collection('progress').doc('retos');
-  async function leerRetos(uid) { const s = await refRetos(uid).get(); return s.exists ? ((s.data() || {}).superados || {}) : {}; }
+  // Los retos que la persona ya había superado en el sistema anterior (progress/achievements, que ya no se puede escribir desde el navegador)
+  // se pasan una sola vez a progress/retos para que cuenten en los cursos escalonados, los libros y el XP. Su XP ya viene en xpHeredado: aquí valen 0.
+  async function migrarRetosHeredados(uid, doc) {
+    if (doc && doc.heredado) return doc.superados || {};
+    const superados = { ...((doc && doc.superados) || {}) };
+    try {
+      const claves = leerClavesRetos();
+      const viejo = await db.collection('members').doc(uid).collection('progress').doc('achievements').get();
+      const hechos = viejo.exists ? (((viejo.data() || {}).retos || {}).hechos || {}) : {};
+      Object.keys(hechos).forEach(id => {
+        const m = String(id).match(/^(q|o|d|h)-/), h = hechos[id] || {};
+        const grupo = m && { q: claves.quiz, o: claves.orden, d: claves.detective, h: claves.historia }[m[1]];
+        if (grupo && grupo[id] && !superados[id] && Number(h.mejor) > 0) superados[id] = { fecha: String(h.fecha || '').slice(0, 10), mejor: Number(h.mejor) || 0, total: Number(h.total) || 0, xp: 0, heredado: true };
+      });
+    } catch (_) { /* sin historial anterior */ }
+    await refRetos(uid).set({ superados, heredado: true }, { merge: true });
+    return superados;
+  }
+  async function leerRetos(uid) { const s = await refRetos(uid).get(); return migrarRetosHeredados(uid, s.exists ? (s.data() || {}) : null); }
+  deps.leerRetosSuperados = leerRetos;
 
   // Reutilizable por el resto del servidor (video, progreso)
   async function evaluar(uid, decoded) {
