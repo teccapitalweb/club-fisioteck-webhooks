@@ -179,3 +179,14 @@ test('aviso "Hay un cupón para ti" y tarjeta "Lo sentimos" cuando se agotó', a
     assert.equal((await s.llamar('/api/creditos/cupon-disponible')).cuerpo.hay, false);
   } finally { s.cerrar(); }
 });
+
+test('el administrador ve TODOS los materiales desbloqueados y un miembro común no', async () => {
+  const s = await levantar(base());
+  try {
+    const adm = (await s.llamar('/api/creditos', null, 'admin')).cuerpo;
+    assert.ok(adm.materiales.length > 0);
+    assert.ok(adm.materiales.every(m => m.desbloqueado === true && m.abiertoPorRetos === true && m.faltanRetos === 0));
+    const socio = (await s.llamar('/api/creditos', null, 'socio')).cuerpo;
+    assert.ok(socio.materiales.some(m => m.desbloqueado !== true), 'un miembro no recibe nada abierto por ser admin');
+  } finally { s.cerrar(); }
+});

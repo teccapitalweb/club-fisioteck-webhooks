@@ -102,12 +102,14 @@ function montarRutasCreditos(app, deps) {
 
   // ---------- Socio / cuenta gratuita ----------
   app.get('/api/creditos', envolver('estado', false, async (req, res, d) => {
-    const miembro = await miembroDe(d.uid);
+    const esAdm = esAdminPorToken(d);
+    const miembro = (await miembroDe(d.uid)) || (esAdm ? {} : null);
     if (!miembro) throw errorHttp(403, 'Completa tu registro gratuito para continuar.');
-    const membresia = deps.tieneMembresia(miembro), hechos = await retosHechosDe(d.uid);
+    const membresia = esAdm || deps.tieneMembresia(miembro), hechos = await retosHechosDe(d.uid);
     res.json({
       saldo: miembro.creditos || 0, costo: COSTO_POR_DEFECTO, membresia, retosHechos: hechos,
-      materiales: leerCatalogo().map(m => vistaMaterial(m, miembro, membresia, hechos)),
+      // El administrador ve TODOS los materiales desbloqueados (solo él: ninguna cuenta de miembro recibe esto)
+      materiales: leerCatalogo().map(m => esAdm ? { ...vistaMaterial(m, miembro, true, 9999), desbloqueado: true, abiertoPorRetos: true, incluidoEnMembresia: true, faltanRetos: 0 } : vistaMaterial(m, miembro, membresia, hechos)),
       aviso: miembro.creditosAviso && !miembro.creditosAviso.visto ? { cantidad: miembro.creditosAviso.cantidad, mensaje: miembro.creditosAviso.mensaje || '', ms: miembro.creditosAviso.ms } : null
     });
   }));

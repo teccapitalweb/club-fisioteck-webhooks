@@ -103,7 +103,7 @@ function montarRutasLibros(app, deps) {
   // ---------- Miembros ----------
   app.get('/api/libros', envolver(false, async (req, res, d) => {
     const m = await miembroDe(d.uid), admin_ = esAdminPorToken(d), membresia = admin_ || !!(m && deps.tieneMembresia(m)), hechos = await retosHechos(d.uid);
-    const libros = (await todos()).filter(l => l.activo !== false).map(l => ({ id: l.id, titulo: l.titulo, autor: l.autor || '', descripcion: l.descripcion || '', portada: l.portada || '', licencia: l.licencia || '', licenciaUrl: l.licenciaUrl || '', fuente: l.fuente || '', fuenteUrl: l.fuenteUrl || '', idioma: l.idioma || '', paginas: l.paginas || 0, requiere: l.requiereRetos, desbloqueado: membresia && hechos >= l.requiereRetos, faltan: Math.max(0, l.requiereRetos - hechos) }));
+    const libros = (await todos()).filter(l => l.activo !== false).map(l => ({ id: l.id, titulo: l.titulo, autor: l.autor || '', descripcion: l.descripcion || '', portada: l.portada || '', licencia: l.licencia || '', licenciaUrl: l.licenciaUrl || '', fuente: l.fuente || '', fuenteUrl: l.fuenteUrl || '', idioma: l.idioma || '', paginas: l.paginas || 0, requiere: l.requiereRetos, desbloqueado: admin_ || (membresia && hechos >= l.requiereRetos), faltan: admin_ ? 0 : Math.max(0, l.requiereRetos - hechos) }));
     res.json({ ok: true, membresia, retosHechos: hechos, libros });
   }));
   app.post('/api/libros/:id/enlace', envolver(false, async (req, res, d) => {
