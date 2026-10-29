@@ -29,15 +29,15 @@ function fakeDb(semilla) {
   return { collection: col, recursiveDelete, datos };
 }
 const tokens = { admin: { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true }, socio: { uid: 's1', email: 'S@m.com', email_verified: true } };
-async function levantar(semilla, stripe) {
+async function levantar(semilla, stripe, extra) {
   const db = fakeDb(semilla), app = express(); app.use(express.json());
   const borrados = [];
   const admin = { auth: () => ({ verifyIdToken: async t => { if (!tokens[t]) throw new Error('x'); return tokens[t]; }, deleteUser: async uid => { borrados.push(uid); } }) };
-  montarRutasCuenta(app, { db, admin, stripe });
+  montarRutasCuenta(app, { db, admin, stripe, ...(extra || {}) });
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const base = 'http://127.0.0.1:' + srv.address().port;
-  const llamar = async (cuerpo, quien = 'socio') => {
-    const r = await fetch(base + '/api/cuenta/eliminar', { method: 'POST', headers: { Authorization: 'Bearer ' + quien, 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+  const llamar = async (cuerpo, quien = 'socio', ruta = '/api/cuenta/eliminar') => {
+    const r = await fetch(base + ruta, { method: 'POST', headers: { Authorization: 'Bearer ' + quien, 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
     return { status: r.status, cuerpo: await r.json() };
   };
   return { db, borrados, llamar, cerrar: () => srv.close() };
@@ -95,4 +95,56 @@ test('eliminar cuenta: administradores y visitantes sin sesión no pueden', asyn
   assert.equal((await s.llamar({ confirmar: 'ELIMINAR' }, 'admin')).status, 403);
   assert.equal((await s.llamar({ confirmar: 'ELIMINAR' }, 'nadie')).status, 401);
   assert.deepEqual(s.borrados, []); s.cerrar();
+});
+
+// ---- Cosas que el Club hacía en Firestore y ahora hace el servidor (reglas estrictas) ----
+const VINCULAR = '/api/cuenta/vincular', VENCIMIENTO = '/api/cuenta/vencimiento';
+const pagos = [{ date: '2026-10-01', amount: 199 }];
+const semillaVinculo = extra => ({
+  'members/viejo1': { email: 's@m.com', status: 'active', plan: 'mensual', payments: pagos, stripeCustomerId: 'cus_1', nextPaymentDate: '2026-12-01' },
+  'members/otro': { email: 'otro@m.com', status: 'active', payments: pagos },
+  ...extra
+});
+
+test('vincular: pasa los pagos del documento con su mismo correo a la cuenta de quien inició sesión', async () => {
+  const s = await levantar(semillaVinculo({ 'members/s1': { name: 'Ana', email: 's@m.com', status: 'registered' } }), null);
+  const r = await s.llamar({}, 'socio', VINCULAR);
+  assert.equal(r.status, 200); assert.deepEqual(r.cuerpo, { existe: true, vinculado: true });
+  const m = s.db.datos.get('members/s1');
+  assert.equal(m.status, 'active'); assert.equal(m.plan, 'mensual'); assert.equal(m.stripeCustomerId, 'cus_1'); assert.deepEqual(m.payments, pagos);
+  assert.ok(s.db.datos.has('members/viejo1'), 'el documento viejo no se borra'); s.cerrar();
+});
+
+test('vincular: crea la cuenta si todavía no tenía documento', async () => {
+  const s = await levantar(semillaVinculo({}), null);
+  const r = await s.llamar({}, 'socio', VINCULAR);
+  assert.equal(r.cuerpo.vinculado, true); assert.equal(s.db.datos.get('members/s1').status, 'active'); s.cerrar();
+});
+
+test('vincular: solo consulta dice si existe pero no cambia nada', async () => {
+  const s = await levantar(semillaVinculo({ 'members/s1': { email: 's@m.com', status: 'registered' } }), null);
+  const r = await s.llamar({ soloConsulta: true }, 'socio', VINCULAR);
+  assert.deepEqual(r.cuerpo, { existe: true, vinculado: false }); assert.equal(s.db.datos.get('members/s1').status, 'registered'); s.cerrar();
+});
+
+test('vincular: con dos documentos con pagos no mezcla cuentas', async () => {
+  const s = await levantar(semillaVinculo({ 'members/viejo2': { email: 's@m.com', payments: pagos }, 'members/s1': { email: 's@m.com', status: 'registered' } }), null);
+  const r = await s.llamar({}, 'socio', VINCULAR);
+  assert.equal(r.cuerpo.vinculado, false); assert.equal(s.db.datos.get('members/s1').status, 'registered'); s.cerrar();
+});
+
+test('vincular: sin sesión no puede y no toca documentos de otras personas', async () => {
+  const s = await levantar(semillaVinculo({ 'members/s1': { email: 's@m.com', status: 'registered' } }), null);
+  assert.equal((await s.llamar({}, 'nadie', VINCULAR)).status, 401);
+  assert.equal(s.db.datos.get('members/otro').status, 'active'); s.cerrar();
+});
+
+test('vencimiento: marca inactiva solo si el servidor confirma que ya venció', async () => {
+  const semilla = () => ({ 'members/s1': { status: 'active', nextPaymentDate: '2020-01-01' } });
+  let s = await levantar(semilla(), null, { tieneMembresia: () => false });
+  assert.deepEqual((await s.llamar({ razon: 'vencimiento' }, 'socio', VENCIMIENTO)).cuerpo, { actualizado: true });
+  assert.equal(s.db.datos.get('members/s1').status, 'inactive'); s.cerrar();
+  s = await levantar(semilla(), null, { tieneMembresia: () => true });
+  assert.deepEqual((await s.llamar({}, 'socio', VENCIMIENTO)).cuerpo, { actualizado: false });
+  assert.equal(s.db.datos.get('members/s1').status, 'active'); s.cerrar();
 });

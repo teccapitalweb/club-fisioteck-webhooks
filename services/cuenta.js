@@ -91,6 +91,54 @@ function montarRutasCuenta(app, deps) {
       res.status(500).json({ error: 'No se pudo eliminar la cuenta. Inténtalo de nuevo.' });
     }
   });
+
+  // ---- Lo que el Club hacía directamente en Firestore y las reglas estrictas ya no permiten desde el navegador ----
+  async function conSesion(req, res, fn) {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+      if (!m) return res.status(401).json({ error: 'Inicia sesión para continuar.' });
+      let d; try { d = await admin.auth().verifyIdToken(m[1]); } catch (_) { return res.status(401).json({ error: 'Tu sesión no es válida o expiró.' }); }
+      await fn(d);
+    } catch (e) {
+      if (e && e.status) return res.status(e.status).json({ error: e.message });
+      console.error('[cuenta]', e && e.message);
+      res.status(500).json({ error: 'No se pudo completar la operación.' });
+    }
+  }
+
+  // Pago hecho antes de crear la cuenta del Club: el documento del socio está con otro id pero con su mismo correo.
+  // { soloConsulta: true } solo dice si existe ese otro documento; sin eso, y con el correo verificado, pasa los pagos a la cuenta
+  // de quien inició sesión SOLO si hay exactamente un documento con pagos (así no se mezclan cuentas ajenas). El documento viejo no se borra.
+  app.post('/api/cuenta/vincular', (req, res) => conSesion(req, res, async d => {
+    const uid = d.uid, email = String(d.email || '').toLowerCase();
+    if (!uid || !email) return res.json({ existe: false, vinculado: false });
+    const sn = await db.collection('members').where('email', '==', email).limit(5).get();
+    const otros = sn.docs.filter(x => x.id !== uid).map(x => ({ id: x.id, datos: x.data() || {} }));
+    const salida = { existe: otros.length > 0, vinculado: false };
+    if (req.body && req.body.soloConsulta === true) return res.json(salida);
+    if (d.email_verified !== true) return res.json(salida);
+    const ref = db.collection('members').doc(uid), propio = await ref.get(), mio = propio.exists ? propio.data() || {} : {};
+    if (Array.isArray(mio.payments) && mio.payments.length) return res.json(salida);
+    const candidatos = otros.filter(x => Array.isArray(x.datos.payments) && x.datos.payments.length > 0);
+    if (candidatos.length !== 1) return res.json(salida);
+    const c = candidatos[0].datos, mezcla = {};
+    ['plan', 'payments', 'nextPaymentDate', 'paymentMethod', 'status', 'stripeCustomerId', 'stripeSubscriptionId'].forEach(k => { if (c[k]) mezcla[k] = c[k]; });
+    if (propio.exists) await ref.update(mezcla); else await ref.set({ ...mezcla, name: d.name || '', email });
+    console.log('[vincular] pagos del documento ' + candidatos[0].id + ' → ' + uid);
+    res.json({ existe: true, vinculado: true });
+  }));
+
+  // El Club avisa que la membresía parece vencida; el servidor lo comprueba con sus propios datos antes de marcarla "inactive"
+  app.post('/api/cuenta/vencimiento', (req, res) => conSesion(req, res, async d => {
+    const ref = db.collection('members').doc(d.uid), s = await ref.get();
+    if (!s.exists) return res.json({ actualizado: false });
+    const m = s.data() || {};
+    if (!['active', 'paid', 'cancelled'].includes(m.status) || (deps.tieneMembresia && deps.tieneMembresia(m))) return res.json({ actualizado: false });
+    const razon = String((req.body && req.body.razon) || 'vencimiento').replace(/[^\wÁ-ú .,-]/g, '').slice(0, 40) || 'vencimiento';
+    await ref.update({ status: 'inactive', expiredAt: new Date().toISOString().split('T')[0], expiredReason: razon });
+    res.json({ actualizado: true });
+  }));
 }
 
 module.exports = { montarRutasCuenta, crearEliminadorDeCuenta, PALABRA };
