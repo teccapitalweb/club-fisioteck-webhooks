@@ -196,10 +196,17 @@ function montarRutasLogros(app, deps) {
       filas: filas.slice(0, 20).map((r, i) => ({ posicion: i + 1, nombre: r.alias || 'Miembro', avatar: r.avatar || '', xp: r.xp, retos: r.retos || 0, esTu: r.uid === d.uid })) });
   }));
 
-  // Premio de bienvenida: +100 XP una sola vez, al terminar el recorrido del panel
+  // Regalo de bienvenida: +100 XP una sola vez, justo después de la bienvenida (como Alintec). Solo cuentas creadas en los últimos 7 días y no administradores.
+  async function cuentaReciente(uid, d) {
+    if (esAdminPorToken(d)) return false;
+    let ms = 0;
+    try { const u = await admin.auth().getUser(uid); ms = Date.parse(u && u.metadata && u.metadata.creationTime) || 0; } catch (_) { /* sin dato en Auth */ }
+    if (!ms) { try { const m = await db.collection('members').doc(uid).get(); const c = m.exists ? (m.data() || {}).createdAt : null; ms = c && typeof c.toMillis === 'function' ? c.toMillis() : c ? (Date.parse(c) || 0) : 0; } catch (_) { /* sin dato en la ficha */ } }
+    return !ms || ahora().getTime() - ms <= 7 * 864e5;
+  }
   app.post('/api/logros/bienvenida', envolver('bienvenida', async (req, res, d) => {
     let doc = await leer(d.uid, 'logros'); if (!doc) doc = await migrarSiHaceFalta(d.uid);
-    const nuevo = !doc.bienvenida;
+    const nuevo = !doc.bienvenida && await cuentaReciente(d.uid, d);
     const estado = await estadoDe(d.uid, d, nuevo ? { cambios: { bienvenida: true, bienvenidaEn: ahora().toISOString() } } : {});
     res.json({ ...estado, premioNuevo: nuevo });
   }));

@@ -169,3 +169,21 @@ test('insignias de comunidad: Embajador con 1 invitado válido y La manada crece
   assert.equal(man.ok({ invitadosValidos: 3 }), false); assert.equal(man.ok({ invitadosValidos: 4 }), true);
   assert.equal(emb.xp, 60); assert.equal(man.xp, 150);
 });
+
+// ---- El regalo de bienvenida solo es para cuentas nuevas (como Alintec) ----
+test('regalo de bienvenida: cuentas antiguas y administradores no lo reciben; las nuevas, sí y una sola vez', async () => {
+  tokens.adm = { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true };
+  const s = await levantar({ 'members/a1': { status: 'active' } }, '2026-10-26T18:00:00Z');
+  const conCreacion = fecha => { s.deps.admin.auth = () => ({ verifyIdToken: async t => { if (!tokens[t]) throw new Error('x'); return tokens[t]; }, getUser: async () => ({ metadata: { creationTime: fecha } }) }); };
+  try {
+    conCreacion('2026-01-05T00:00:00Z'); // cuenta de enero: antigua
+    const vieja = (await s.llamar('/api/logros/bienvenida', {})).cuerpo;
+    assert.equal(vieja.premioNuevo, false); assert.equal(vieja.xp, 0, 'una cuenta antigua no recibe los 100 XP');
+    const adm = (await s.llamar('/api/logros/bienvenida', {}, 'adm')).cuerpo;
+    assert.equal(adm.premioNuevo, false, 'los administradores nunca lo reciben');
+    conCreacion('2026-10-24T00:00:00Z'); // creada hace 2 días: nueva
+    const nueva = (await s.llamar('/api/logros/bienvenida', {})).cuerpo;
+    assert.equal(nueva.premioNuevo, true); assert.equal(nueva.xp, 100);
+    assert.equal((await s.llamar('/api/logros/bienvenida', {})).cuerpo.premioNuevo, false, 'una sola vez');
+  } finally { s.cerrar(); delete tokens.adm; }
+});
