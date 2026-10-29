@@ -9,12 +9,12 @@ function fakeDb() {
   const datos = new Map();
   return { datos, collection: n => ({ doc: id => ({ async get() { const v = datos.get(n + '/' + id); return { exists: v !== undefined, data: () => v }; }, async set(v) { datos.set(n + '/' + id, JSON.parse(JSON.stringify(v))); } }) }) };
 }
-async function levantar({ env = {}, fetchFalso } = {}) {
+async function levantar({ env = {}, fetchFalso, cargarCatalogo } = {}) {
   const db = fakeDb();
   const admin = { auth: () => ({ verifyIdToken: async t => { if (t === 'admin') return { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true }; if (t === 'socio') return { uid: 's1', email: 's@mail.com', email_verified: true }; throw new Error('x'); } }) };
   const registrados = [];
   const app = express(); app.use(express.json());
-  montarRutasAdminExtra(app, { db, admin, env, fetch: fetchFalso, registrarCatalogoExtra: c => registrados.push(c) });
+  montarRutasAdminExtra(app, { db, admin, env, fetch: fetchFalso, cargarCatalogo, registrarCatalogoExtra: c => registrados.push(c) });
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const url = 'http://127.0.0.1:' + srv.address().port;
   const llamar = async (ruta, cuerpo, token = 'admin') => {
@@ -93,4 +93,24 @@ test('estado: semáforo con el peor resultado y sin revelar llaves', async () =>
   } finally { s.cerrar(); }
   const roto = await levantar({ env: {} });
   try { assert.equal((await roto.llamar('/api/admin/estado')).cuerpo.resumen, 'error'); } finally { roto.cerrar(); }
+});
+
+test('Bunny: si Bunny falla o rechaza, el panel recibe el catálogo guardado en el servidor (no un 502)', async () => {
+  const guardado = { courses: [{ title: 'Curso guardado', collectionId: 'c9', lessons: [{ title: 'Sesión 01', bunnyVideoId: G1 }, { title: 'Sesión 02', bunnyVideoId: G2 }] }] };
+  let intentos = 0;
+  const fetchFalso = async () => { intentos++; return { ok: false, status: 429, json: async () => ({}) }; };
+  const s = await levantar({ env: { BUNNY_STREAM_LIBRARY_ID: '123', BUNNY_STREAM_API_KEY: 'llave-secreta' }, fetchFalso, cargarCatalogo: () => guardado });
+  try {
+    const r = await s.llamar('/api/admin/bunny-catalogo');
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.origen, 'guardado');
+    assert.equal(r.cuerpo.catalogo[0].titulo, 'Curso guardado');
+    assert.deepEqual(r.cuerpo.catalogo[0].sesiones.map(x => [x.numero, x.videoId]), [[1, G1], [2, G2]]);
+    assert.match(r.cuerpo.aviso, /429/); assert.equal(JSON.stringify(r.cuerpo).includes('llave-secreta'), false);
+    assert.ok(intentos >= 3, 'reintenta antes de rendirse');
+  } finally { s.cerrar(); }
+});
+
+test('Bunny: sin catálogo guardado y con Bunny caído responde el error real', async () => {
+  const s = await levantar({ env: { BUNNY_STREAM_LIBRARY_ID: '123', BUNNY_STREAM_API_KEY: 'k' }, fetchFalso: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
+  try { const r = await s.llamar('/api/admin/bunny-catalogo'); assert.equal(r.status, 502); assert.match(r.cuerpo.error, /401/); } finally { s.cerrar(); }
 });

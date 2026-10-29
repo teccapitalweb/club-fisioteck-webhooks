@@ -1,6 +1,8 @@
 // Cursos escalonados y retos que adelantan la apertura (como Alintec y Zoorigen).
 //
-// Con membresía y el escalonado activo (config/club.escalonadoActivo = true, lo enciende el administrador):
+// Con membresía y el escalonado activo (config/club.escalonadoActivo = true, lo enciende el administrador). Por defecto aplica a TODOS los miembros,
+// contando desde el inicio real de su membresía; lo que ya empezaron a ver se les conserva abierto. Si el administrador marca "solo miembros nuevos"
+// (config/club.escalonadoSoloNuevos = true), quienes pagaban antes de `escalonadoDesde` conservan todo abierto:
 //   - El primer curso es el que el socio eligió en su prueba gratuita (o el primero del catálogo) y está abierto desde el inicio.
 //   - Cada `escalonadoDias` días (8 por defecto) se abre el siguiente curso, en el orden del catálogo.
 //   - ADELANTO POR RETOS (una sola vez): con `retosParaAdelantar` retos superados (12 por defecto, al menos 2 de cada tipo: quiz, ordena,
@@ -26,6 +28,7 @@ function configEscalonado(cfg) {
     activo: c.escalonadoActivo === true,
     dias: limitar(Math.round(Number(c.escalonadoDias)) || 8, 1, 60),
     desde: typeof c.escalonadoDesde === 'string' ? c.escalonadoDesde : null,
+    soloNuevos: c.escalonadoSoloNuevos === true,
     retosParaAdelantar: limitar(Math.round(Number(c.retosParaAdelantar)) || 12, 4, 17)
   };
 }
@@ -56,7 +59,7 @@ function inicioMembresia(m) {
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).
-function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null }) {
+function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null, iniciados = [] }) {
   const conf = configEscalonado(cfg);
   const ids = (catalogo.courses || []).map(c => String(c.courseId));
   const abiertoTodo = motivo => ({ escalonado: false, motivo, cursos: Object.fromEntries(ids.map(id => [id, { abierto: true }])) });
@@ -66,7 +69,7 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
 
   const inicio = inicioMembresia(miembro);
   const desde = fechaDe(conf.desde);
-  if (!inicio || (desde && inicio < desde)) return abiertoTodo('anterior');
+  if (!inicio || (conf.soloNuevos && desde && inicio < desde)) return abiertoTodo('anterior');
 
   const trial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
   const primero = trial && ids.includes(trial) ? trial : ids[0];
@@ -82,6 +85,8 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     const abreEn = new Date(inicio.getTime() + k * conf.dias * DIA);
     cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, Math.ceil((abreEn - (ahora || new Date())) / DIA)), orden: k };
   });
+  // Lo que el miembro ya empezó a ver se le conserva abierto (nadie pierde un curso en marcha)
+  (iniciados || []).forEach(id => { const c = cursos[String(id)]; if (c && !c.abierto) cursos[String(id)] = { abierto: true, iniciado: true }; });
   // Cursos abiertos con el "Premio por invitar" (4 invitados válidos): quedan abiertos para siempre
   (adelantados || []).forEach(id => { if (cursos[String(id)]) cursos[String(id)] = { abierto: true, porPremio: true }; });
   // Curso abierto con el adelanto por retos (una sola vez)
@@ -93,7 +98,8 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     escalonado: true, diasEntreCursos: conf.dias, retosParaAdelantar: conf.retosParaAdelantar,
     retosSuperados: nRetos, adelantos: adelantoRetos ? 1 : 0, adelanto,
     retosParaSiguiente: adelanto.estado === 'disponible' ? Math.max(0, conf.retosParaAdelantar - prog.total) : null,
-    abiertos, total: orden.length, orden, cursos
+    abiertos, total: orden.length, orden, cursos,
+    inicio: inicio.toISOString(), diaMembresia: dias + 1
   };
 }
 
@@ -149,8 +155,11 @@ function montarRutasAcceso(app, deps) {
     const premios = await db.collection('members').doc(uid).collection('progress').doc('premios').get();
     const adelantados = premios.exists ? ((premios.data() || {}).usados || []).map(u => u && u.cursoId).filter(Boolean) : [];
     const datosPremios = premios.exists ? (premios.data() || {}) : {};
+    const progCursos = await db.collection('members').doc(uid).collection('progress').doc('courses').get();
+    const datosProg = progCursos.exists ? (progCursos.data() || {}) : {};
+    const iniciados = Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed) && datosProg[k].completed.length > 0).map(k => k.slice(2));
     const params = {
-      miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
+      iniciados, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
       retosSuperados: Object.keys(retos).length, retosHechos: retos, ahora: new Date(), esAdmin: esAdminPorToken(decoded), adelantados, conMembresia: deps.tieneMembresia(miembro)
     };
     let guardado = datosPremios.adelantoRetos && datosPremios.adelantoRetos.cursoId ? String(datosPremios.adelantoRetos.cursoId) : null;

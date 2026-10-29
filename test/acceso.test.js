@@ -11,12 +11,31 @@ const hechos = (q, o, d, h) => Object.fromEntries([...Array(q).keys()].map(i => 
 const socio = (extra = {}) => ({ status: 'active', startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 249 }], ...extra });
 const abiertos = a => Object.entries(a.cursos).filter(([, v]) => v.abierto).map(([k]) => Number(k));
 
-test('apagado, admin o socio anterior a la fecha de encendido: todo abierto', () => {
+test('apagado, admin o (con "solo nuevos") socio anterior a la fecha de encendido: todo abierto', () => {
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg: {}, ahora: dia(0) }).escalonado, false);
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0), esAdmin: true }).escalonado, false);
-  const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0) });
+  const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01', escalonadoSoloNuevos: true }, ahora: dia(0) });
   assert.equal(viejo.escalonado, false);
   assert.equal(abiertos(viejo).length, 4);
+});
+
+test('por defecto la regla aplica a TODOS: un miembro anterior cuenta desde su inicio real', () => {
+  const m = socio();
+  const cfgTodos = { ...cfg, escalonadoDesde: '2026-11-01' };
+  const dia0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgTodos, ahora: dia(0) });
+  assert.equal(dia0.escalonado, true); assert.deepEqual(abiertos(dia0), [abiertos(dia0)[0]]);
+  const dia17 = calcularAcceso({ miembro: m, catalogo, cfg: cfgTodos, ahora: dia(17) });
+  assert.equal(abiertos(dia17).length, 3); // 1 + floor(17 / 8)
+  assert.equal(dia17.diaMembresia, 18); assert.ok(typeof dia17.inicio === 'string');
+});
+
+test('lo que el miembro ya empezó a ver se conserva abierto aunque todavía no le toque', () => {
+  const sinProgreso = calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0) });
+  const cerrado = Object.keys(sinProgreso.cursos).find(id => !sinProgreso.cursos[id].abierto);
+  const con = calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0), iniciados: [cerrado] });
+  assert.equal(con.cursos[cerrado].abierto, true); assert.equal(con.cursos[cerrado].iniciado, true);
+  const otros = Object.keys(con.cursos).filter(id => id !== cerrado && !sinProgreso.cursos[id].abierto);
+  assert.ok(otros.every(id => con.cursos[id].abierto === false), 'solo se conserva lo iniciado');
 });
 
 test('una cuenta sin membresía no entra al escalonado', () => {

@@ -53,11 +53,29 @@ function montarRutasAdminExtra(app, deps) {
     catch (e) { console.error('[admin-extra]', req.path, e && e.message); res.status(e && e.status ? e.status : 500).json({ error: e && e.status ? e.message : 'No se pudo completar la operación.' }); }
   };
 
+  const pausa = ms => new Promise(r => setTimeout(r, ms));
+  // Bunny limita cuántas consultas acepta a la vez: se reintenta si responde 429 o un error del servidor
   async function bunnyGet(ruta) {
     if (!llamar) throw Object.assign(new Error('Este servidor no puede llamar a Bunny.'), { status: 503 });
-    const r = await llamar('https://video.bunnycdn.com/library/' + encodeURIComponent(biblioteca()) + ruta, { headers: { AccessKey: llaveApi(), accept: 'application/json' } });
-    if (!r.ok) throw Object.assign(new Error('Bunny respondió ' + r.status + '.'), { status: 502 });
-    return r.json();
+    let ultimo = 0;
+    for (let intento = 1; intento <= 3; intento++) {
+      const opciones = { headers: { AccessKey: llaveApi(), accept: 'application/json' } };
+      if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opciones.signal = AbortSignal.timeout(15000);
+      let r;
+      try { r = await llamar('https://video.bunnycdn.com/library/' + encodeURIComponent(biblioteca()) + ruta, opciones); }
+      catch (e) { ultimo = 0; if (intento < 3) { await pausa(300 * intento); continue; } throw Object.assign(new Error('Bunny no respondió a tiempo.'), { status: 502 }); }
+      if (r.ok) return r.json();
+      ultimo = r.status;
+      if ((r.status === 429 || r.status >= 500) && intento < 3) { await pausa(400 * intento); continue; }
+      break;
+    }
+    throw Object.assign(new Error('Bunny respondió ' + ultimo + (ultimo === 401 || ultimo === 403 ? ' (revisa BUNNY_STREAM_API_KEY)' : '') + '.'), { status: 502 });
+  }
+  // Consulta varias listas con un máximo de 3 a la vez (antes eran todas de golpe)
+  async function enParalelo(lista, limite, fn) {
+    const salida = new Array(lista.length); let i = 0;
+    await Promise.all(Array.from({ length: Math.min(limite, lista.length) }, async () => { while (i < lista.length) { const k = i++; salida[k] = await fn(lista[k]); } }));
+    return salida;
   }
   async function listarTodo(ruta) {
     const items = [];
@@ -70,16 +88,30 @@ function montarRutasAdminExtra(app, deps) {
     return items;
   }
 
+  const cacheCatalogo = { datos: null, t: 0 };
   app.get('/api/admin/bunny-catalogo', soloAdmin(async (req, res) => {
     if (!biblioteca() || !llaveApi()) return res.status(503).json({ error: 'Bunny todavía no está configurado en el servidor (BUNNY_STREAM_LIBRARY_ID y BUNNY_STREAM_API_KEY).' });
-    const colecciones = await listarTodo('/collections');
-    const catalogo = await Promise.all(colecciones.map(async col => {
+    // Lo último que salió bien se recuerda 5 minutos; si Bunny falla se usa el catálogo guardado en el servidor para que el panel no se quede sin él
+    if (cacheCatalogo.datos && Date.now() - cacheCatalogo.t < 5 * 60 * 1000) return res.json({ ok: true, catalogo: cacheCatalogo.datos, origen: 'reciente' });
+    let colecciones, catalogo;
+    try {
+    colecciones = await listarTodo('/collections');
+    catalogo = await enParalelo(colecciones, 3, async col => {
       const videos = (await listarTodo('/videos?collection=' + encodeURIComponent(col.guid))).filter(v => v.status === 4);
       const sesiones = videos.map((v, k) => ({ numero: numeroDeClase(v.title) || k + 1, titulo: String(v.title || '').replace(/\.[a-z0-9]{2,4}$/i, ''), videoId: v.guid, duracion: minutosTexto(v.length) }))
         .sort((a, b) => a.numero - b.numero);
       return { titulo: col.name, collectionId: col.guid, sesiones };
-    }));
-    res.json({ ok: true, catalogo });
+    });
+    } catch (e) {
+      console.error('[admin-extra] bunny-catalogo:', e && e.message);
+      const guardado = deps.cargarCatalogo ? deps.cargarCatalogo() : null;
+      const cursos = guardado && Array.isArray(guardado.courses) ? guardado.courses : [];
+      if (!cursos.length) throw e;
+      const respaldo = cursos.map(c => ({ titulo: c.title, collectionId: c.collectionId || '', sesiones: (c.lessons || []).filter(l => l.bunnyVideoId).map((l, k) => ({ numero: numeroDeClase(l.title) || k + 1, titulo: String(l.title || ''), videoId: l.bunnyVideoId, duracion: '' })) }));
+      return res.json({ ok: true, catalogo: respaldo, origen: 'guardado', aviso: (e && e.message ? e.message + ' ' : '') + 'Se muestra el catálogo guardado en el servidor.' });
+    }
+    cacheCatalogo.datos = catalogo; cacheCatalogo.t = Date.now();
+    res.json({ ok: true, catalogo, origen: 'bunny' });
   }));
 
   app.post('/api/admin/catalogo-curso', soloAdmin(async (req, res, d) => {
