@@ -3,6 +3,18 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const crypto = require('crypto');
+const { esAdminPorToken: esAdminDeToken } = require('./services/certificados');
+const escH = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Límite de intentos por persona/IP en cobros y cancelaciones (en memoria)
+const usosPago = new Map();
+function limitarPago(req, res, next) {
+  const clave = (req.firebaseUser && req.firebaseUser.uid) || req.ip || 'x', t = Date.now();
+  const l = (usosPago.get(clave) || []).filter(x => t - x < 60000);
+  if (l.length >= 10) return res.status(429).json({ error: 'Demasiados intentos. Espera un minuto e intenta de nuevo.' });
+  l.push(t); usosPago.set(clave, l); if (usosPago.size > 5000) usosPago.clear();
+  next();
+}
+const iguales = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 const fs = require('fs');
 const path = require('path');
 
@@ -12,6 +24,12 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 const db = admin.firestore();
+
+// ===== BITÁCORA DEL SERVIDOR: reinicios, caídas y errores agrupados (se ven en el panel → Estado del servidor) =====
+const bitacoraMemoria = require('./services/bitacora-memoria');
+const bitacoraServidor = require('./services/bitacora-servidor').crearBitacoraServidor({ db, admin });
+bitacoraMemoria.instalar();
+bitacoraMemoria.fijarDestino(mensaje => bitacoraServidor.registrarError(mensaje));
 
 // ===== STRIPE INIT =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -29,12 +47,12 @@ async function leerPreciosConfig() {
   try {
     const snap = await db.collection('config').doc('club').get();
     const c = snap.exists ? snap.data() : {};
-    const precioMes = Number(c.precioMes) > 0 ? Number(c.precioMes) : 249;
+    const precioMes = Number(c.precioMes) > 0 ? Number(c.precioMes) : 199;
     const precioAno = Number(c.precioAno) > 0 ? Number(c.precioAno) : 1999;
     return { precioMes, precioAno };
   } catch (e) {
     console.error('Error leyendo precios config:', e.message);
-    return { precioMes: 249, precioAno: 1999 };
+    return { precioMes: 199, precioAno: 1999 };
   }
 }
 
@@ -46,7 +64,15 @@ const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || '';
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '';
 const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || '';
 
+// Correos del Club: primero Resend (dominio propio de FisioTeck); si no está configurado, EmailJS como hasta ahora.
+const correoSvc = require('./services/correo');
 async function sendEmailJS(toEmail, subject, htmlMessage) {
+  if (correoSvc.configurado()) {
+    const texto = String(htmlMessage).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const r = await correoSvc.enviarConResend({ para: toEmail, asunto: subject, html: htmlMessage, texto });
+    if (r.ok) { console.log(`Resend sent to: ${toEmail}`); return; }
+    console.warn('Resend no pudo enviar (' + (r.motivo || 'error') + '); se intenta con EmailJS.');
+  }
   if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
     console.warn('EmailJS no está configurado; se omite el correo saliente.');
     return;
@@ -92,15 +118,15 @@ async function sendEmailToClient(email, name, plan, amount) {
         <p style="color:rgba(255,255,255,.7);margin:8px 0 0;font-size:.9rem;">Tu membresía está activa</p>
       </div>
       <div style="padding:28px 32px;">
-        <p style="font-size:1rem;color:#333;">¡Hola <strong>${name || 'Socio'}</strong>! 👋</p>
+        <p style="font-size:1rem;color:#333;">Hola <strong>${name || 'Socio'}</strong>,</p>
         <p style="color:#555;line-height:1.6;">Gracias por unirte al Club FisioTeck. Tu suscripción <strong>${planLabel}</strong> ya está activa.</p>
         <p style="color:#555;line-height:1.6;">Ahora tienes acceso completo a:</p>
         <ul style="color:#555;line-height:1.8;">
-          <li>📚 Todos los cursos grabados</li>
-          <li>🎓 Cursos en vivo y webinars</li>
-          <li>🛠️ Herramientas clínicas profesionales</li>
-          <li>💬 Foro exclusivo de la comunidad</li>
-          <li>📄 Biblioteca de PDFs y recursos</li>
+          <li>Todos los cursos grabados</li>
+          <li>Cursos en vivo y webinars</li>
+          <li>Herramientas clínicas profesionales</li>
+          <li>Foro exclusivo de la comunidad</li>
+          <li>Biblioteca de PDFs y recursos</li>
         </ul>
         <div style="text-align:center;margin:24px 0;">
           <a href="https://club.fisioteck.com" style="display:inline-block;padding:14px 32px;background:#1565C0;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Ir al Club FisioTeck →</a>
@@ -109,13 +135,13 @@ async function sendEmailToClient(email, name, plan, amount) {
       </div>
     </div>
   `;
-  await sendEmailJS(email, '¡Bienvenido al Club FisioTeck! Tu membresía está activa 🎉', html);
+  await sendEmailJS(email, '¡Bienvenido al Club FisioTeck! Tu membresía está activa', html);
 }
 
 async function sendEmailToAdmin(email, name, plan, amount) {
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#f0f7ff;border:1px solid #d0e3f7;border-radius:12px;padding:24px;">
-      <h2 style="color:#1565C0;margin:0 0 16px;">💰 Nuevo pago recibido</h2>
+      <h2 style="color:#1565C0;margin:0 0 16px;">Nuevo pago recibido</h2>
       <table style="width:100%;border-collapse:collapse;">
         <tr><td style="padding:8px 0;color:#666;width:120px;">Nombre:</td><td style="padding:8px 0;color:#333;font-weight:600;">${name || 'Sin nombre'}</td></tr>
         <tr><td style="padding:8px 0;color:#666;">Email:</td><td style="padding:8px 0;color:#333;">${email}</td></tr>
@@ -126,7 +152,7 @@ async function sendEmailToAdmin(email, name, plan, amount) {
       </table>
     </div>
   `;
-  await sendEmailJS(ADMIN_EMAIL, `💰 Nuevo pago: ${name || email} - ${plan === 'anual' ? 'Anual' : 'Mensual'}`, html);
+  await sendEmailJS(ADMIN_EMAIL, `Nuevo pago: ${name || email} - ${plan === 'anual' ? 'Anual' : 'Mensual'}`, html);
 }
 
 // ===== HELPER: Save admin notification =====
@@ -154,7 +180,10 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleSt
 
 // JSON parser for all other routes
 app.use(express.json());
-app.use(cors());
+app.set('trust proxy', 1);
+const ORIGENES = new Set(['https://club.fisioteck.com', 'https://www.fisioteck.com', 'https://fisioteck.com', 'https://teccapitalweb.github.io', 'http://localhost:8080', 'http://127.0.0.1:8080', 'http://localhost:8790', 'http://127.0.0.1:8790']
+  .concat(String(process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)));
+app.use(cors({ origin: (origen, cb) => cb(null, !origen || ORIGENES.has(origen)) })); // sin Origin (servidor a servidor, Stripe) pasa; un sitio no autorizado no recibe permiso del navegador
 
 // ===== BUNNY STREAM: catálogo y reproducción firmada =====
 const BUNNY_CATALOG_PATH = path.join(__dirname, 'data', 'bunny-catalog.json');
@@ -163,9 +192,27 @@ const BUNNY_STREAM_TOKEN_KEY = process.env.BUNNY_STREAM_TOKEN_KEY || '';
 const BUNNY_STREAM_PLAYER_HOST = (process.env.BUNNY_STREAM_PLAYER_HOST || 'https://iframe.mediadelivery.net').replace(/\/$/, '');
 const BUNNY_PLAYBACK_TTL_SECONDS = Math.max(60, Math.min(Number(process.env.BUNNY_PLAYBACK_TTL_SECONDS) || 900, 3600));
 
+// Cursos creados o editados desde el panel (colección catalogoVideo): se suman al catálogo del archivo para poder reproducirse.
+// Se guardan en memoria y se refrescan cada minuto, porque varias copias del servidor pueden estar corriendo.
+let catalogoExtra = {};
+function registrarCatalogoExtra(curso) { catalogoExtra[String(curso.courseId)] = curso; }
+async function refrescarCatalogoExtra() {
+  try {
+    const sn = await db.collection('catalogoVideo').get();
+    const nuevo = {};
+    sn.docs.forEach(d => { const c = d.data(); if (c && c.courseId !== undefined) nuevo[String(c.courseId)] = c; });
+    catalogoExtra = nuevo;
+  } catch (e) { console.error('No se pudo leer catalogoVideo:', e.message); }
+}
+refrescarCatalogoExtra();
+setInterval(refrescarCatalogoExtra, 60000).unref();
+
 function loadBunnyCatalog() {
-  if (!fs.existsSync(BUNNY_CATALOG_PATH)) return { libraryId: '', courses: [] };
-  return JSON.parse(fs.readFileSync(BUNNY_CATALOG_PATH, 'utf8'));
+  const base = fs.existsSync(BUNNY_CATALOG_PATH) ? JSON.parse(fs.readFileSync(BUNNY_CATALOG_PATH, 'utf8')) : { libraryId: '', courses: [] };
+  const extra = Object.values(catalogoExtra);
+  if (!extra.length) return base;
+  const ids = new Set(extra.map(c => String(c.courseId)));
+  return { ...base, courses: [...(base.courses || []).filter(c => !ids.has(String(c.courseId))), ...extra] };
 }
 
 function findCatalogLesson(catalog, courseId, lessonId) {
@@ -179,7 +226,7 @@ async function requireFirebaseUser(req, res, next) {
   try {
     const authorization = req.get('authorization') || '';
     const match = authorization.match(/^Bearer\s+(.+)$/i);
-    if (!match) return res.status(401).json({ error: 'Inicia sesión para reproducir esta clase.' });
+    if (!match) return res.status(401).json({ error: 'Inicia sesión para continuar.' });
     req.firebaseUser = await admin.auth().verifyIdToken(match[1]);
     next();
   } catch (error) {
@@ -209,9 +256,22 @@ app.post('/api/video-playback', requireFirebaseUser, async (req, res) => {
     const memberDoc = await db.collection('members').doc(req.firebaseUser.uid).get();
     if (!memberDoc.exists) return res.status(403).json({ error: 'Completa tu registro gratuito para continuar.' });
 
-    const isPreview = entry.lesson.isPreview === true;
-    if (!isPreview && !memberHasPremiumAccess(memberDoc.data())) {
+    // Prueba gratuita: quien eligió un curso lo ve completo (ver /api/prueba-gratuita).
+    const trialId = memberDoc.data().trialCourseId;
+    const tieneMembresia = memberHasPremiumAccess(memberDoc.data());
+    // La prueba cubre todas las clases del curso elegido MENOS la última (como Zoorigen y Alintec).
+    const isTrial = trialId !== undefined && trialId !== null && String(trialId) === String(courseId)
+      && Number(entry.lesson.index) < (entry.course.lessons || []).length - 1;
+    if (!isTrial && !tieneMembresia) {
       return res.status(402).json({ error: 'Esta clase se desbloquea con la membresía.' });
+    }
+    // Cursos escalonados: con membresía, el curso debe estar abierto (ver services/acceso.js).
+    if (!isTrial && tieneMembresia) {
+      const { acceso } = await depsAcceso.evaluarAcceso(req.firebaseUser.uid, req.firebaseUser);
+      const info = acceso.cursos && acceso.cursos[String(courseId)];
+      if (info && !info.abierto) {
+        return res.status(403).json({ error: 'Este curso se abre en ' + info.dias + ' día' + (info.dias === 1 ? '' : 's') + ', o antes si superas retos.', abreEn: info.abreEn, dias: info.dias });
+      }
     }
 
     const libraryId = BUNNY_STREAM_LIBRARY_ID || catalog.libraryId || '';
@@ -225,10 +285,66 @@ app.post('/api/video-playback', requireFirebaseUser, async (req, res) => {
     const token = crypto.createHash('sha256').update(BUNNY_STREAM_TOKEN_KEY + videoId + expires).digest('hex');
     const embedUrl = `${BUNNY_STREAM_PLAYER_HOST}/embed/${encodeURIComponent(libraryId)}/${encodeURIComponent(videoId)}?token=${token}&expires=${expires}&autoplay=true`;
     res.set('Cache-Control', 'no-store');
-    return res.json({ embedUrl, expiresAt: new Date(expires * 1000).toISOString(), preview: isPreview });
+    return res.json({ embedUrl, expiresAt: new Date(expires * 1000).toISOString(), preview: isTrial && !tieneMembresia });
   } catch (error) {
     console.error('Bunny playback error:', error.message);
     return res.status(500).json({ error: 'No se pudo preparar la reproducción.' });
+  }
+});
+
+// ===== PRUEBA GRATUITA: cada cuenta registrada elige UN curso completo, una sola vez =====
+// GET  → { estado: 'pendiente' | 'elegida' | 'no-aplica', cursoId, elegibles: [ids] }
+// POST { courseId } → guarda trialCourseId en members/{uid}. Irreversible. Quien ya es miembro no la necesita.
+function pruebaGratuitaEstado(member, catalog) {
+  const elegibles = (catalog.courses || []).filter(c => (c.lessons || []).length > 0).map(c => c.courseId);
+  if (memberHasPremiumAccess(member)) return { estado: 'no-aplica', cursoId: null, elegibles };
+  if (member.trialCourseId !== undefined && member.trialCourseId !== null) {
+    return { estado: 'elegida', cursoId: member.trialCourseId, elegibles };
+  }
+  // Solo cuentas nuevas: quien ya fue miembro (pagos, vencido, cancelado) no recibe una prueba.
+  const fueMiembro = member.status !== 'registered' || (Array.isArray(member.payments) && member.payments.length > 0);
+  if (fueMiembro) return { estado: 'no-aplica', cursoId: null, elegibles };
+  return { estado: 'pendiente', cursoId: null, elegibles };
+}
+
+app.get('/api/prueba-gratuita', requireFirebaseUser, async (req, res) => {
+  try {
+    const memberDoc = await db.collection('members').doc(req.firebaseUser.uid).get();
+    if (!memberDoc.exists) return res.status(403).json({ error: 'Completa tu registro gratuito para continuar.' });
+    res.set('Cache-Control', 'no-store');
+    return res.json(pruebaGratuitaEstado(memberDoc.data(), loadBunnyCatalog()));
+  } catch (error) {
+    console.error('Prueba gratuita (estado):', error.message);
+    return res.status(500).json({ error: 'No se pudo consultar tu prueba gratuita.' });
+  }
+});
+
+app.post('/api/prueba-gratuita', requireFirebaseUser, async (req, res) => {
+  try {
+    const courseId = req.body && req.body.courseId;
+    const catalog = loadBunnyCatalog();
+    const curso = (catalog.courses || []).find(c => String(c.courseId) === String(courseId) && (c.lessons || []).length > 0);
+    if (!curso) return res.status(400).json({ error: 'Ese curso no está disponible como prueba.' });
+
+    const ref = db.collection('members').doc(req.firebaseUser.uid);
+    const resultado = await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { codigo: 403, error: 'Completa tu registro gratuito para continuar.' };
+      const estado = pruebaGratuitaEstado(snap.data(), catalog);
+      if (estado.estado === 'no-aplica') return { codigo: 409, error: 'Tu membresía ya incluye todos los cursos.' };
+      if (estado.estado === 'elegida') return { codigo: 409, error: 'Ya elegiste tu curso de prueba.', cursoId: estado.cursoId };
+      tx.update(ref, {
+        trialCourseId: curso.courseId,
+        trialStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      return { codigo: 200, cursoId: curso.courseId };
+    });
+    if (resultado.codigo !== 200) return res.status(resultado.codigo).json({ error: resultado.error, cursoId: resultado.cursoId });
+    return res.json({ estado: 'elegida', cursoId: resultado.cursoId });
+  } catch (error) {
+    console.error('Prueba gratuita (elegir):', error.message);
+    return res.status(500).json({ error: 'No se pudo guardar tu curso de prueba.' });
   }
 });
 
@@ -257,9 +373,11 @@ function getPlanFromPrice(priceId) {
 }
 
 // ===== API: Create Stripe Checkout Session (soporta popup 'hosted' y 'embedded') =====
-app.post('/api/create-checkout', async (req, res) => {
+app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
-    const { plan, email, uid, mode } = req.body;
+    const { plan, mode } = req.body || {};
+    // El correo y el uid salen de la sesión, nunca del cuerpo de la petición
+    const email = String(req.firebaseUser.email || '').toLowerCase(), uid = req.firebaseUser.uid;
     if (!plan || !email) {
       return res.status(400).json({ error: 'Plan and email required' });
     }
@@ -317,7 +435,17 @@ app.post('/api/create-checkout', async (req, res) => {
       sessionConfig.return_url = 'https://club.fisioteck.com?session_id={CHECKOUT_SESSION_ID}';
     }
 
-    const session = await stripe.checkout.sessions.create(sessionConfig);
+    // Recordatorios de pago: si la persona tiene un cupón vigente (y eligió el plan mensual), se aplica solo
+    const cuponAplicado = await recordatorios.aplicarCupon(sessionConfig, uid, plan, email);
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create(sessionConfig);
+    } catch (errorCupon) {
+      // Si Stripe rechaza el cupón (venció justo ahora) la persona paga como siempre: nunca se le bloquea el pago
+      if (!cuponAplicado) throw errorCupon;
+      console.warn('[Recordatorios] Stripe rechazó el cupón; se crea el pago sin él:', errorCupon && errorCupon.message);
+      session = await stripe.checkout.sessions.create(recordatorios.sinCupon(sessionConfig));
+    }
 
     res.json({
       url: session.url || null,                   // frontend nuevo (popup)
@@ -330,7 +458,7 @@ app.post('/api/create-checkout', async (req, res) => {
 });
 
 // ===== API: Check session status (after payment) =====
-app.get('/api/checkout-status/:sessionId', async (req, res) => {
+app.get('/api/checkout-status/:sessionId', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
     res.json({
@@ -349,27 +477,20 @@ async function handleStripeWebhook(req, res) {
 
   // Verify webhook signature
   try {
-    if (STRIPE_WEBHOOK_SECRET) {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        req.headers['stripe-signature'],
-        STRIPE_WEBHOOK_SECRET
-      );
-    } else {
-      event = JSON.parse(req.body);
-    }
+    if (!STRIPE_WEBHOOK_SECRET) { console.error('Webhook rechazado: falta STRIPE_WEBHOOK_SECRET (nunca se aceptan eventos sin firma).'); return res.status(400).send('Webhook no configurado'); }
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    return res.status(400).send('Webhook Error');
   }
 
   console.log(`Stripe event received: ${event.type}`);
+  bitacoraServidor.registrarAvisoStripe(event.type, true);
 
-  // RESPOND IMMEDIATELY to Stripe (avoid timeout)
-  res.json({ received: true });
-
-  // Process in background
+  // Se procesa ANTES de responder: si algo falla se contesta 500 y Stripe reintenta; un evento ya procesado no se repite
+  const refEvento = db.collection('stripeEventos').doc(String(event.id));
   try {
+    if ((await refEvento.get()).exists) return res.json({ received: true, repetido: true });
     switch (event.type) {
 
       // ===== CHECKOUT COMPLETED (first payment) =====
@@ -383,6 +504,7 @@ async function handleStripeWebhook(req, res) {
         const src = session.metadata?.source || '';
         if (src && src !== 'fisioteck-club') {
           console.log(`Ignorado: pago de otro proyecto (source=${src})`);
+          bitacoraServidor.registrarIgnorado(event.type);
           break;
         }
 
@@ -480,6 +602,7 @@ async function handleStripeWebhook(req, res) {
         if (member) {
           await db.collection('members').doc(member.uid).update({
             status: 'active',
+            accessUntil: '', cancelledAt: '', paymentFailedAt: '',
             plan: planType,
             lastPaymentDate: now,
             nextPaymentDate: nextDate.toISOString().split('T')[0],
@@ -490,6 +613,7 @@ async function handleStripeWebhook(req, res) {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
           console.log(`Member updated: ${email}`);
+          await recordatorios.cerrarSerie(session, member.uid); // deja de recibir recordatorios de pago (nunca lanza)
 
           // Send emails
           await sendEmailToClient(email, member.name || '', planType, amount);
@@ -609,6 +733,7 @@ async function handleStripeWebhook(req, res) {
         if (member) {
           await db.collection('members').doc(member.uid).update({
             status: 'active',
+            accessUntil: '', cancelledAt: '', paymentFailedAt: '',
             lastPaymentDate: now,
             nextPaymentDate: nextDate.toISOString().split('T')[0],
             payments: admin.firestore.FieldValue.arrayUnion(paymentRecord),
@@ -716,8 +841,10 @@ async function handleStripeWebhook(req, res) {
           await db.collection('members').doc(member.uid).update({
             status: 'inactive',
             paymentFailedAt: new Date().toISOString().split('T')[0],
+            payments: admin.firestore.FieldValue.arrayUnion({ date: new Date().toISOString().split('T')[0], amount: (invoice.amount_due || 0) / 100, currency: 'MXN', method: 'Stripe', estado: 'failed', status: 'failed', concept: 'Cobro rechazado', invoiceId: invoice.id || '' }),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
+          sendEmailJS(email, 'No pudimos cobrar tu membresía del Club FisioTeck', '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;"><h2 style="color:#0A3E68;">No pudimos cobrar tu membresía</h2><p>Hola <strong>' + escH(member.name || 'Socio') + '</strong>, el cobro de tu membresía fue rechazado y tu acceso quedó en pausa. Actualiza tu tarjeta o vuelve a suscribirte desde el Club para recuperarlo: <a href="https://club.fisioteck.com">club.fisioteck.com</a>.</p><p style="color:#777;font-size:.85rem;">Si ya lo resolviste, ignora este mensaje.</p></div>');
 
           await notifyAdmin('payment_failed', {
             memberName: member.name || email,
@@ -731,15 +858,20 @@ async function handleStripeWebhook(req, res) {
       default:
         console.log(`Unhandled event type: ${event.type}`);
     }
+    await refEvento.set({ tipo: event.type, ms: Date.now() });
+    return res.json({ received: true });
   } catch (err) {
     console.error('Webhook processing error:', err);
+    return res.status(500).json({ error: 'No se pudo procesar el evento.' });
   }
 }
 
 // ===== API: Check member status (for Club site) =====
-app.get('/api/member/:email', async (req, res) => {
+app.get('/api/member/:email', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
     const email = req.params.email.toLowerCase();
+    // Solo la propia persona (o un administrador) puede consultar sus pagos
+    if (email !== String(req.firebaseUser.email || '').toLowerCase() && !esAdminDeToken(req.firebaseUser)) return res.status(403).json({ error: 'No puedes consultar los datos de otra persona.' });
     const member = await findMemberByEmail(email);
     if (member) {
       res.json({
@@ -764,9 +896,10 @@ app.get('/api/member/:email', async (req, res) => {
 });
 
 // ===== API: Link pending member to registered user =====
-app.post('/api/link-member', async (req, res) => {
+app.post('/api/link-member', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
-    const { email, uid } = req.body;
+    // Solo se liga el pago pendiente del correo de la propia sesión a la propia cuenta
+    const email = String(req.firebaseUser.email || '').toLowerCase(), uid = req.firebaseUser.uid;
     if (!email || !uid) return res.status(400).json({ error: 'Email and UID required' });
 
     const pendingDoc = await db.collection('pending_members').doc(email.toLowerCase()).get();
@@ -796,9 +929,10 @@ app.post('/api/link-member', async (req, res) => {
 });
 
 // ===== API: Cancel subscription (from Club dashboard) =====
-app.post('/api/cancel-subscription', async (req, res) => {
+app.post('/api/cancel-subscription', requireFirebaseUser, limitarPago, async (req, res) => {
   try {
-    const { email, uid } = req.body;
+    // Solo se cancela la suscripción de la persona que inició sesión
+    const uid = req.firebaseUser.uid, email = String(req.firebaseUser.email || '').toLowerCase();
     if (!email && !uid) return res.status(400).json({ error: 'Email or UID required' });
 
     let member = null;
@@ -827,11 +961,12 @@ app.post('/api/cancel-subscription', async (req, res) => {
     console.log(`Cancel request from: ${memberEmail}`);
 
     // Cancel in Stripe
-    let stripeCancelled = false;
+    let stripeCancelled = false, finPeriodo = null;
     const subId = member.stripeSubscriptionId;
     if (subId) {
       try {
-        await stripe.subscriptions.cancel(subId);
+        const subAct = await stripe.subscriptions.update(subId, { cancel_at_period_end: true });
+        if (subAct && subAct.current_period_end) finPeriodo = new Date(subAct.current_period_end * 1000).toISOString().split('T')[0];
         stripeCancelled = true;
         console.log(`Stripe subscription cancelled: ${subId}`);
       } catch (stripeErr) {
@@ -845,7 +980,7 @@ app.post('/api/cancel-subscription', async (req, res) => {
     }
 
     const now = new Date().toISOString().split('T')[0];
-    const accessUntil = member.nextPaymentDate || now;
+    const accessUntil = finPeriodo || member.nextPaymentDate || now;
 
     await db.collection('members').doc(memberDocId).update({
       status: 'cancelled',
@@ -865,10 +1000,10 @@ app.post('/api/cancel-subscription', async (req, res) => {
           <p style="color:rgba(255,255,255,.7);margin:8px 0 0;font-size:.9rem;">Tu membresía ha sido cancelada</p>
         </div>
         <div style="padding:28px 32px;">
-          <p style="font-size:1rem;color:#333;">Hola <strong>${member.name || 'Socio'}</strong>,</p>
+          <p style="font-size:1rem;color:#333;">Hola <strong>${escH(member.name || 'Socio')}</strong>,</p>
           <p style="color:#555;line-height:1.6;">Tu suscripción al Club FisioTeck ha sido cancelada exitosamente. No se realizarán más cobros.</p>
           <div style="background:#FFF3E0;border:1px solid #FFE0B2;border-radius:8px;padding:16px;margin:20px 0;">
-            <p style="color:#E65100;font-weight:600;margin:0 0 4px;">📅 Acceso hasta: ${accessUntil}</p>
+            <p style="color:#E65100;font-weight:600;margin:0 0 4px;">Acceso hasta: ${accessUntil}</p>
             <p style="color:#BF360C;font-size:.85rem;margin:0;">Puedes seguir usando todos los beneficios del club hasta esa fecha.</p>
           </div>
           <p style="color:#555;line-height:1.6;">Si cambias de opinión, siempre puedes volver a suscribirte desde el club.</p>
@@ -884,18 +1019,18 @@ app.post('/api/cancel-subscription', async (req, res) => {
     // Send cancellation email to admin
     const cancelAdminHtml = `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#FFF3E0;border:1px solid #FFE0B2;border-radius:12px;padding:24px;">
-        <h2 style="color:#E65100;margin:0 0 16px;">⚠️ Cancelación de membresía</h2>
+        <h2 style="color:#E65100;margin:0 0 16px;">Cancelación de membresía</h2>
         <table style="width:100%;border-collapse:collapse;">
           <tr><td style="padding:8px 0;color:#666;width:120px;">Nombre:</td><td style="padding:8px 0;color:#333;font-weight:600;">${member.name || 'Sin nombre'}</td></tr>
           <tr><td style="padding:8px 0;color:#666;">Email:</td><td style="padding:8px 0;color:#333;">${memberEmail}</td></tr>
           <tr><td style="padding:8px 0;color:#666;">Plan:</td><td style="padding:8px 0;color:#333;font-weight:600;">${(member.plan || 'mensual') === 'anual' ? 'Anual' : 'Mensual'}</td></tr>
           <tr><td style="padding:8px 0;color:#666;">Acceso hasta:</td><td style="padding:8px 0;color:#E65100;font-weight:700;">${accessUntil}</td></tr>
           <tr><td style="padding:8px 0;color:#666;">Cancelado:</td><td style="padding:8px 0;color:#333;">${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</td></tr>
-          <tr><td style="padding:8px 0;color:#666;">Stripe:</td><td style="padding:8px 0;color:#333;">${stripeCancelled ? 'Cancelado ✅' : 'Pendiente ⚠️'}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Stripe:</td><td style="padding:8px 0;color:#333;">${stripeCancelled ? 'Cancelado ' : 'Pendiente '}</td></tr>
         </table>
       </div>
     `;
-    sendEmailJS(ADMIN_EMAIL, `⚠️ Cancelación: ${member.name || memberEmail} - ${(member.plan || 'mensual') === 'anual' ? 'Anual' : 'Mensual'}`, cancelAdminHtml);
+    sendEmailJS(ADMIN_EMAIL, `Cancelación: ${member.name || memberEmail} - ${(member.plan || 'mensual') === 'anual' ? 'Anual' : 'Mensual'}`, cancelAdminHtml);
 
     await notifyAdmin('cancellation', {
       memberName: member.name || memberEmail,
@@ -917,8 +1052,24 @@ app.post('/api/cancel-subscription', async (req, res) => {
   }
 });
 
+// ===== API: Reactivar una suscripción cancelada que todavía no vence =====
+app.post('/api/reactivate-subscription', requireFirebaseUser, limitarPago, async (req, res) => {
+  try {
+    const uid = req.firebaseUser.uid, ref = db.collection('members').doc(uid), doc = await ref.get();
+    if (!doc.exists) return res.status(404).json({ error: 'No encontramos tu cuenta.' });
+    const m = doc.data() || {};
+    if (m.status !== 'cancelled' || !m.stripeSubscriptionId) return res.status(409).json({ error: 'Tu suscripción no está cancelada o ya terminó. Suscríbete de nuevo desde el Club.' });
+    await stripe.subscriptions.update(m.stripeSubscriptionId, { cancel_at_period_end: false });
+    await ref.update({ status: 'active', accessUntil: '', cancelledAt: '', stripeCancelled: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Reactivate error:', err.message);
+    res.status(500).json({ error: 'No se pudo reactivar tu suscripción.' });
+  }
+});
+
 // ===== API: Fetch news from NewsData.io (with 6h cache) =====
-const NEWSDATA_API_KEY = 'pub_0e241a225e664d0c8e13129875265f78';
+const NEWSDATA_API_KEY = process.env.NEWSDATA_API_KEY || ''; // antes estaba escrita en el código: rota esa clave en newsdata.io y ponla como variable de entorno
 let newsCache = { articles: [], lastFetch: 0 };
 const NEWS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
@@ -1015,10 +1166,10 @@ function calcularFechaVencimientoBackend(data) {
 app.post('/api/expire-inactive-members', async (req, res) => {
   try {
     // Seguridad: exigir token admin
-    const providedToken = req.query.token || req.body?.token || '';
+    const providedToken = String(req.get('x-admin-token') || req.body?.token || '');
     const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-    if (!ADMIN_TOKEN || providedToken !== ADMIN_TOKEN) {
-      return res.status(401).json({ error: 'Unauthorized. Provide ?token=YOUR_ADMIN_TOKEN' });
+    if (!ADMIN_TOKEN || !iguales(providedToken, ADMIN_TOKEN)) {
+      return res.status(401).json({ error: 'No autorizado.' });
     }
 
     const dryRun = req.query.dryRun === '1' || req.body?.dryRun === true;
@@ -1076,9 +1227,45 @@ app.post('/api/expire-inactive-members', async (req, res) => {
     });
   } catch (err) {
     console.error('Expire error:', err);
-    res.status(500).json({ error: 'Server error: ' + err.message });
+    res.status(500).json({ error: 'Error del servidor.' });
   }
 });
+
+// ===== CERTIFICADOS Y RUTAS DE ADMINISTRADOR (services/certificados.js) =====
+const depsCert = { db, admin, cargarCatalogo: loadBunnyCatalog, enviarCorreoCertificado: c => correoSvc.enviarCorreoCertificado(c) };
+require('./services/certificados').montarRutasCertificados(app, depsCert);
+// Correos de cuenta con la plantilla de FisioTeck: confirmar correo y restablecer contraseña
+require('./services/rutas-auth').montarRutasAuth(app, { admin });
+
+// ===== AVANCE POR CLASE (services/progreso.js): solo el servidor escribe el avance =====
+const depsAcceso = { db, admin, cargarCatalogo: loadBunnyCatalog, tieneMembresia: memberHasPremiumAccess, emitirCertificadoAuto: depsCert.emitirCertificadoAuto };
+// Recordatorios de pago por correo con cupones (arrancan APAGADOS: el administrador los activa desde el panel)
+const recordatorios = require('./services/recordatorios').crearRecordatorios({ db, admin, stripe, tieneMembresia: memberHasPremiumAccess, cargarCatalogo: loadBunnyCatalog, leerPreciosConfig, apiPublica: 'https://web-production-cd020.up.railway.app' });
+recordatorios.montarRutas(app);
+// Historial del servidor y acciones de miembros con bitácora de quién hizo qué (services/rutas-servidor.js)
+require('./services/rutas-servidor').montarRutasServidor(app, { db, admin, bitacora: bitacoraServidor });
+require('./services/admin-extra').montarRutasAdminExtra(app, { db, admin, registrarCatalogoExtra }); // Bunny, catálogo de cursos nuevos y estado de servicios
+require('./services/acceso').montarRutasAcceso(app, depsAcceso); // /api/acceso, /api/retos (escalonado y retos calificados)
+require('./services/resenas').montarRutasResenas(app, depsAcceso); // reseñas de cursos (solo quien tiene el certificado)
+require('./services/rutas-referidos').montarRutasReferidos(app, depsAcceso); // referidos y premio por invitar
+require('./services/creditos').montarRutasCreditos(app, depsAcceso); // créditos y cupones (cuentas con y sin membresía)
+require('./services/directorio').montarRutasDirectorio(app, depsAcceso); // directorio VIP: contacto privado, VIP verificado y certificados
+require('./services/cuenta').montarRutasCuenta(app, { db, admin, stripe }); // eliminar mi cuenta (borra todo lo de la persona)
+require('./services/admin-miembros').montarRutasAdminMiembros(app, { db, admin, stripe }); // pagos desde Stripe, papelera de miembros y retos y XP del panel
+require('./services/avisos').montarRutasAvisos(app, { db, admin }); // avisos personales de la campana (respuestas del foro)
+require('./services/libros').montarRutasLibros(app, depsAcceso); // libros de lectura que se abren con retos
+depsAcceso.sembrarLibros().catch(e => console.warn('Libros base (siembra):', e.message));
+const datosCuriosos = require('./services/datos-curiosos').crearServicio({ db, admin }); // dato curioso martes y viernes en la campana
+datosCuriosos.montarRutas(app);
+datosCuriosos.sembrar().catch(e => console.warn('Datos curiosos (siembra):', e.message));
+setInterval(() => datosCuriosos.revisarEnvio().catch(e => console.warn('Datos curiosos (envío):', e.message)), 3600 * 1000).unref();
+require('./services/logros').montarRutasLogros(app, depsAcceso); // XP, racha, insignias, reto del día y flashcards: los calcula el servidor
+require('./services/materiales').montarRutasMateriales(app, depsAcceso); // materiales de curso (por clase) y materiales libres, con enlaces privados
+require('./services/quiz').montarRutasQuiz(app, depsAcceso); // preguntas de clase: la respuesta correcta solo la conoce el servidor
+depsAcceso.refrescarMaterialesLibres().catch(e => console.error('materialesLibres:', e.message));
+setInterval(() => depsAcceso.refrescarMaterialesLibres().catch(() => {}), 60000).unref();
+require('./services/rutas-publico').montarRutasPublico(app, depsAcceso); // encuesta de la portada, guía sin respuesta y visitas
+require('./services/progreso').montarRutasProgreso(app, depsAcceso);
 
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
@@ -1093,6 +1280,16 @@ app.get('/', (req, res) => {
       'POST /api/link-member',
       'POST /api/cancel-subscription',
       'POST /api/video-playback (requiere Firebase ID token)',
+      'POST /api/certificados/emitir · GET /api/certificados/:folio (requiere Firebase ID token para emitir)',
+      'POST /api/encuesta · POST /api/chatbot/sin-respuesta · POST /api/visita (públicas, con límites)',
+      'GET /api/cursos/:cursoId/materiales · POST /api/cursos/:cursoId/materiales/:indice/enlace (requiere Firebase ID token)',
+      'GET /api/creditos · POST /api/creditos/canjear · POST /api/creditos/cupon · GET /api/materiales/:id/enlace (requiere Firebase ID token)',
+      'POST /api/referidos/registrar · GET /api/referidos/estado · POST /api/premios/usar (requiere Firebase ID token)',
+      'POST /api/resenas · GET /api/resenas/mias (requiere Firebase ID token)',
+      'GET /api/acceso · GET /api/retos · POST /api/retos/completar (requiere Firebase ID token)',
+      'POST /api/cursos/:cursoId/progreso · GET /api/cursos/progreso (requiere Firebase ID token)',
+      'GET /api/admin/bunny-catalogo · POST /api/admin/catalogo-curso · GET /api/admin/estado (solo administradores)',
+      'GET /api/admin/* (solo administradores)',
       'POST /api/expire-inactive-members (requiere ?token=)'
     ]
   });
@@ -1101,4 +1298,9 @@ app.get('/', (req, res) => {
 // ===== START =====
 app.listen(PORT, () => {
   console.log(`Club FisioTeck Webhook Server (Stripe) running on port ${PORT}`);
+  recordatorios.iniciarTarea();
+  bitacoraServidor.iniciar().catch(e => console.warn('Bitácora del servidor no iniciada:', e && e.message));
+  // Limpieza diaria: se borran los identificadores anónimos de visitantes de días viejos (solo sirven para contar únicos del propio día)
+  const limpiarVisitas = () => require('./services/visitas').limpiarVisitantesAntiguos(db).then(n => { if (n) console.log('🧹 Visitantes antiguos borrados:', n); }).catch(e => console.warn('Limpieza de visitas:', e && e.message));
+  setTimeout(limpiarVisitas, 5 * 60 * 1000).unref(); setInterval(limpiarVisitas, 24 * 3600 * 1000).unref();
 });

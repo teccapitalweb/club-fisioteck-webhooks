@@ -1,0 +1,55 @@
+# Glosario
+
+Este glosario reúne cincuenta términos que aparecen a lo largo del libro, con definiciones breves y en lenguaje sencillo. Son definiciones didácticas y no sustituyen las de un diccionario médico especializado.
+
+- **Adherencia.** Grado en que una persona sigue las recomendaciones acordadas con el profesional de salud, como asistir a las sesiones o realizar sus ejercicios.
+- **Alianza terapéutica.** Relación de colaboración entre profesional y paciente basada en acuerdo sobre objetivos, tareas y confianza mutua.
+- **Alodinia.** Dolor provocado por un estímulo que normalmente no duele, como el roce de la ropa sobre piel sensibilizada.
+- **Ambivalencia.** Presencia simultánea de motivos a favor y en contra de un cambio; es una experiencia normal ante el cambio de hábitos.
+- **Asta dorsal.** Región posterior de la médula espinal donde llegan las fibras sensitivas y se procesa y modula la información dolorosa.
+- **Autoeficacia.** Confianza de una persona en su capacidad para realizar una acción o afrontar una situación.
+- **Banderas amarillas.** Factores psicosociales, como el miedo o las creencias poco útiles, asociados con mayor riesgo de que el dolor persista.
+- **Banderas rojas.** Signos, síntomas o antecedentes que aumentan la sospecha de una condición potencialmente grave y sugieren valoración médica.
+- **Biopsicosocial.** Modelo que entiende la salud y el dolor como resultado de la interacción de factores biológicos, psicológicos y sociales.
+- **Brote.** Aumento temporal del dolor que puede aparecer tras un esfuerzo, estrés o sin causa clara, y que no siempre implica daño nuevo.
+- **Catastrofización.** Estilo de pensamiento que magnifica la amenaza del dolor, genera rumiación y sensación de desesperanza o incapacidad.
+- **Confidencialidad.** Deber de proteger la información que el paciente confía al profesional.
+- **Consentimiento informado.** Proceso por el cual una persona, con información suficiente y de forma voluntaria, acepta o rechaza una intervención.
+- **Corteza cingulada anterior.** Región cerebral relacionada con aspectos emocionales, atencionales y motivacionales del dolor.
+- **Corteza somatosensorial.** Área cerebral que procesa el tacto y la localización e intensidad de las sensaciones corporales.
+- **Dolor agudo.** Dolor de corta duración, generalmente asociado con una lesión o enfermedad reciente y con función protectora.
+- **Dolor neuropático.** Dolor causado por una lesión o enfermedad del sistema nervioso somatosensorial.
+- **Dolor nociceptivo.** Dolor que surge de la activación de nociceptores por daño real o potencial de tejidos no nerviosos.
+- **Dolor nociplástico.** Dolor que se atribuye a una alteración del procesamiento del dolor sin evidencia clara de daño tisular activo ni de lesión nerviosa que lo explique.
+- **Dolor persistente.** Dolor que dura más de tres meses o más allá del tiempo esperado de curación; también llamado crónico.
+- **Educación sobre el dolor.** Intervención que explica la naturaleza del dolor y del sistema nervioso para reducir la amenaza percibida y favorecer la participación activa.
+- **Entrevista motivacional.** Estilo de conversación colaborativo que fortalece la motivación propia de la persona para el cambio.
+- **Escucha activa.** Atención plena a lo que el otro comunica, mostrada con silencios, reflejos, resúmenes y lenguaje corporal.
+- **Estrés.** Respuesta del organismo ante demandas o amenazas percibidas, con activación del sistema nervioso simpático y hormonal.
+- **Fibras Aδ.** Fibras nerviosas delgadas y poco mielinizadas que conducen a velocidad moderada y se asocian con el dolor rápido y localizado.
+- **Fibras C.** Fibras nerviosas no mielinizadas y de conducción lenta, asociadas con el dolor sordo, difuso y persistente.
+- **Glía.** Conjunto de células de soporte del sistema nervioso que participan en la modulación de la transmisión del dolor.
+- **Higiene del sueño.** Conjunto de hábitos y condiciones que favorecen un sueño de calidad.
+- **Hiperalgesia.** Respuesta de dolor aumentada ante un estímulo que ya es doloroso.
+- **Hipoalgesia inducida por ejercicio.** Disminución transitoria de la sensibilidad al dolor tras la actividad física.
+- **Ínsula.** Región cerebral implicada en la conciencia corporal y en los aspectos afectivos del dolor.
+- **Lenguaje del cambio.** Expresiones del paciente que manifiestan deseo, capacidad, razones o necesidad de cambiar.
+- **Matriz del dolor.** Red de regiones cerebrales que se activan durante la experiencia dolorosa; no es un centro único.
+- **Miedo-evitación.** Modelo que describe cómo la interpretación amenazante del dolor lleva a evitar actividades, perder función y mantener el dolor.
+- **Modulación descendente.** Conjunto de vías que desde el cerebro y el tronco encefálico inhiben o facilitan la transmisión del dolor en la médula.
+- **Neuroplasticidad.** Capacidad del sistema nervioso de modificar su organización y funcionamiento en respuesta a la experiencia.
+- **Nocicepción.** Detección y transmisión neural de estímulos potencialmente dañinos, que no equivale por sí sola a dolor.
+- **Nociceptor.** Terminación nerviosa especializada en detectar estímulos potencialmente dañinos.
+- **Plasticidad desadaptativa.** Cambio del sistema nervioso que consolida patrones perjudiciales, como la hipersensibilidad.
+- **Pacing o ritmo de actividad.** Estrategia de repartir las tareas en bloques manejables, alternando esfuerzo y descanso, con progresión gradual.
+- **Reflejo (en la entrevista).** Técnica que consiste en devolver al paciente, con otras palabras, lo que expresó para mostrar comprensión.
+- **Rumiación.** Pensamiento repetitivo e intrusivo sobre una preocupación, como el dolor.
+- **Sensibilización central.** Aumento de la capacidad de respuesta de neuronas del sistema nervioso central a estímulos normales o subumbrales.
+- **Sensibilización periférica.** Disminución del umbral de los nociceptores en el tejido, generalmente por mediadores inflamatorios.
+- **Sumación temporal.** Aumento progresivo de la respuesta ante estímulos repetidos; el fenómeno de wind-up es un ejemplo.
+- **Tálamo.** Estructura cerebral que recibe información sensorial y la distribuye hacia la corteza.
+- **Teoría de la compuerta.** Propuesta clásica según la cual la actividad de fibras no dolorosas puede reducir la transmisión de señales dolorosas en la médula.
+- **Tracto espinotalámico.** Vía ascendente que lleva información de dolor y temperatura desde la médula hasta el tálamo.
+- **Validación.** Reconocimiento de que la experiencia del paciente es real y comprensible, sin necesidad de estar de acuerdo con todas sus interpretaciones.
+- **Vivencia de enfermedad.** Forma en que la persona experimenta su problema de salud: ideas, emociones, expectativas y efectos en su vida.
+- **Wind-up.** Fenómeno por el cual las neuronas del asta dorsal responden con más fuerza a estimulación repetida de fibras C.

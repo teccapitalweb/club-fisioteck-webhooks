@@ -1,0 +1,55 @@
+# Glosario
+
+Este glosario reúne cincuenta términos esenciales del libro, en orden alfabético, con definiciones breves y escritas para consulta rápida. Para el contexto completo de cada concepto, consulta el capítulo indicado entre paréntesis.
+
+- **Actina**: proteína que forma los filamentos delgados del sarcómero y a la cual se une la miosina durante la contracción (capítulo 5).
+- **Alvéolo**: pequeño saco de paredes muy delgadas en los pulmones donde se intercambian oxígeno y dióxido de carbono con la sangre (capítulo 9).
+- **ATP (trifosfato de adenosina)**: molécula que funciona como moneda energética de la célula y que se usa directamente para contraer el músculo y transportar iones (capítulo 10).
+- **Axón**: prolongación larga de la neurona que conduce el impulso nervioso hacia otras células (capítulo 7).
+- **Cápsula articular**: manguito de tejido conectivo que rodea una articulación sinovial y contiene el líquido sinovial (capítulo 4).
+- **Cartílago hialino**: tipo de cartílago liso y firme que cubre las superficies articulares y forma el molde de muchos huesos en desarrollo (capítulo 3).
+- **Colágeno**: proteína fibrosa muy resistente a la tracción, principal componente de tendones, ligamentos, hueso y piel (capítulo 2).
+- **Contracción concéntrica**: contracción en la que el músculo se acorta mientras genera tensión (capítulo 5).
+- **Contracción excéntrica**: contracción en la que el músculo se alarga mientras genera tensión para controlar un movimiento (capítulo 5).
+- **Dermatoma**: zona de piel inervada por las fibras sensitivas de un nervio espinal determinado (capítulo 7).
+- **Diafragma**: músculo en forma de cúpula que separa el tórax del abdomen y es el principal músculo de la inspiración (capítulo 9).
+- **Distal**: término de dirección que indica mayor lejanía de la raíz de un miembro (capítulo 1).
+- **Entesis**: zona donde un tendón o ligamento se inserta en el hueso (capítulo 5).
+- **Epífisis**: extremo ensanchado de un hueso largo (capítulo 3).
+- **Fascia**: lámina de tejido conectivo que envuelve músculos y otras estructuras y transmite tensiones entre ellas (capítulo 5).
+- **Fibroblasto**: célula del tejido conectivo que fabrica colágeno y otros componentes de la matriz, protagonista de la cicatrización (capítulo 2).
+- **Fosfocreatina**: compuesto almacenado en el músculo que permite regenerar ATP de forma casi inmediata en esfuerzos breves e intensos (capítulo 10).
+- **Gasto cardiaco**: volumen de sangre que expulsa cada ventrículo por minuto; resulta de multiplicar la frecuencia cardiaca por el volumen sistólico (capítulo 8).
+- **Glucógeno**: forma de almacenamiento de la glucosa, presente en el hígado y en el músculo (capítulo 10).
+- **Hemoglobina**: proteína con hierro, presente en los glóbulos rojos, que transporta el oxígeno en la sangre (capítulos 8 y 9).
+- **Homeostasis**: capacidad del organismo de mantener su ambiente interno dentro de límites estrechos pese a los cambios del entorno (capítulos 1 y 11).
+- **Hormona**: mensajero químico liberado por glándulas a la sangre que actúa sobre células con receptores específicos (capítulo 11).
+- **Hipertrofia**: aumento del tamaño de las fibras musculares, generalmente tras un entrenamiento de fuerza adecuado (capítulo 5).
+- **Inflamación**: respuesta inicial a la lesión caracterizada por rubor, calor, hinchazón, dolor y pérdida de función (capítulo 12).
+- **Lactato**: producto intermedio del metabolismo de la glucosa que el organismo utiliza como combustible y no es la causa directa de las molestias musculares tardías (capítulo 10).
+- **Ligamento**: banda de tejido conectivo denso que une un hueso con otro y estabiliza las articulaciones (capítulo 4).
+- **Líquido sinovial**: fluido viscoso que lubrica las articulaciones sinoviales y nutre el cartílago (capítulo 4).
+- **Matriz extracelular**: material de fibras y sustancia fundamental que rodea a las células, especialmente abundante en el tejido conectivo (capítulo 2).
+- **Mielina**: cubierta aislante de muchos axones que acelera la conducción del impulso nervioso (capítulo 7).
+- **Miosina**: proteína de los filamentos gruesos del sarcómero cuyas cabezas tiran de la actina para generar fuerza (capítulo 5).
+- **Mitocondria**: orgánulo donde se produce la mayor parte del ATP por vía aeróbica (capítulos 2 y 10).
+- **Neurona**: célula especializada en recibir, conducir y transmitir señales eléctricas y químicas (capítulo 7).
+- **Neurotransmisor**: sustancia química liberada en la sinapsis que transmite la señal de una neurona a la siguiente célula (capítulo 7).
+- **Osteoblasto**: célula que forma matriz ósea nueva (capítulo 3).
+- **Osteoclasto**: célula grande que reabsorbe el hueso (capítulo 3).
+- **Osteocito**: célula ósea madura, atrapada en la matriz, que detecta la carga mecánica (capítulo 3).
+- **Periostio**: membrana de tejido conectivo que recubre la superficie externa del hueso y participa en su crecimiento y reparación (capítulo 3).
+- **Plasticidad**: capacidad del sistema nervioso de reorganizar sus conexiones en respuesta al aprendizaje, la experiencia o la lesión (capítulo 7).
+- **Propiocepción**: percepción de la posición y del movimiento del propio cuerpo, que depende de receptores en músculos, tendones y articulaciones (capítulo 4).
+- **Proximal**: término de dirección que indica mayor cercanía a la raíz de un miembro (capítulo 1).
+- **Reflejo de estiramiento**: respuesta involuntaria por la cual un músculo se contrae cuando se estira bruscamente (capítulo 7).
+- **Remodelación ósea**: proceso continuo de reabsorción y formación de hueso que renueva el tejido y lo adapta a las cargas (capítulo 3).
+- **Sarcómero**: unidad contráctil del músculo, formada por filamentos de actina y miosina entre dos líneas Z (capítulo 5).
+- **Sinapsis**: punto de comunicación entre una neurona y otra célula (capítulo 7).
+- **Surfactante**: sustancia que reduce la tensión superficial en los alvéolos y evita su colapso (capítulo 9).
+- **Tendón**: estructura de tejido conectivo denso regular que une el músculo con el hueso y transmite la fuerza (capítulo 5).
+- **Umbral láctico**: intensidad de ejercicio a partir de la cual el lactato en sangre empieza a aumentar con mayor rapidez (capítulo 10).
+- **Unidad motora**: conjunto formado por una neurona motora y todas las fibras musculares que inerva (capítulo 5).
+- **Ventilación**: movimiento de aire hacia dentro y hacia fuera de los pulmones (capítulo 9).
+- **VO2 máx**: máxima cantidad de oxígeno que una persona puede utilizar durante el ejercicio, indicador de la capacidad cardiorrespiratoria (capítulo 8).
+- **Volumen sistólico**: volumen de sangre que expulsa un ventrículo en cada latido (capítulo 8).

@@ -9,12 +9,16 @@
     "bunny:audit": "node scripts/upload-fisioteck-bunny.js --dry-run",
     "bunny:upload": "node scripts/upload-fisioteck-bunny.js --upload",
     "bunny:verify": "node scripts/upload-fisioteck-bunny.js --verify",
-    "bunny:sync-site": "node scripts/sync-fisioteck-site.js"
+    "bunny:sync-site": "node scripts/sync-fisioteck-site.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "firebase-admin": "^12.0.0",
+    "geoip-country": "^5.0.202610240156",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.4",
     "stripe": "^14.0.0",
     "tus-js-client": "^4.3.1"
   }

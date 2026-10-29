@@ -1,0 +1,255 @@
+{
+  "costoPorDefecto": 100,
+  "materiales": [
+    {
+      "id": "pdf-1777917971067",
+      "titulo": "Manejo del dolor lumbar crónico",
+      "desc": "El PDF de manejo del dolor lumbar crónico presenta un enfoque integral que incluye evaluación clínica, ejercicio terapéutico, terapia manual y educación del paciente, con el objetivo de reducir el dolor, mejorar la movilidad y prevenir recaídas, favoreciendo la funcionalidad y calidad de vida.",
+      "tipo": "pdf",
+      "url": "https://drive.google.com/file/d/1mxrkUS8h4frAL5lfzHpjgwczQ065n153/view?usp=drive_link",
+      "thumbnail": "https://drive.google.com/file/d/1jK9TaSOBoBsZUDU7MlvgzcJVJwQy8c3m/view?usp=drive_link",
+      "costo": 100,
+      "requiereRetos": 3
+    },
+    {
+      "id": "pdf-mg-01",
+      "titulo": "Historia clínica fisioterapéutica",
+      "desc": "Formato completo: datos generales, antecedentes, exploración, escalas, diagnóstico fisioterapéutico, plan y consentimiento.",
+      "tipo": "word",
+      "url": "assets/materiales-gratis/01-historia-clinica-fisioterapia.docx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 2
+    },
+    {
+      "id": "pdf-mg-02",
+      "titulo": "Nota de evolución SOAP",
+      "desc": "Plantilla de nota SOAP para cada sesión, con un ejemplo completo resuelto.",
+      "tipo": "word",
+      "url": "assets/materiales-gratis/02-nota-de-evolucion-SOAP.docx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 5
+    },
+    {
+      "id": "pdf-mg-03",
+      "titulo": "Registro de sesiones y evolución",
+      "desc": "Control de sesiones por paciente con EVA antes y después, ejercicios y gráfica de la evolución del dolor.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/03-registro-de-sesiones-y-evolucion.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 8
+    },
+    {
+      "id": "pdf-mg-04",
+      "titulo": "Consentimiento informado",
+      "desc": "Formato editable de consentimiento informado para fisioterapia. Ajústalo a la normativa de tu localidad.",
+      "tipo": "word",
+      "url": "assets/materiales-gratis/04-consentimiento-informado-fisioterapia.docx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 11
+    },
+    {
+      "id": "pdf-mg-05",
+      "titulo": "Agenda semanal del consultorio",
+      "desc": "Agenda semanal en horarios de 30 minutos, con colores por tipo de cita y resumen por día.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/05-agenda-semanal-consultorio.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 14
+    },
+    {
+      "id": "pdf-mg-06",
+      "titulo": "Registro de bioseguridad y limpieza",
+      "desc": "Lista de verificación diaria de limpieza y bioseguridad con responsable y semáforo de cumplimiento.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/06-registro-de-bioseguridad-y-limpieza.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 17
+    },
+    {
+      "id": "pdf-mg-07",
+      "titulo": "Calculadora de IMC y composición",
+      "desc": "IMC, perímetro de cintura y relación cintura-cadera con interpretación por categoría.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/07-calculadora-IMC-y-composicion.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 20
+    },
+    {
+      "id": "pdf-mg-08",
+      "titulo": "Calculadora de frecuencia cardiaca",
+      "desc": "Frecuencia cardiaca máxima estimada y zonas de intensidad de ejercicio. Son estimaciones de referencia.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/08-calculadora-frecuencia-cardiaca-de-ejercicio.xlsx",
+      "thumbnail": "",
+      "categoria": "rehabilitacion",
+      "requiereRetos": 23
+    },
+    {
+      "id": "pdf-mg-09",
+      "titulo": "Registro de rangos de movimiento",
+      "desc": "Captura de goniometría por articulación, comparación entre lados y con valores de referencia.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/09-registro-de-rangos-de-movimiento.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 26
+    },
+    {
+      "id": "pdf-mg-10",
+      "titulo": "Registro de fuerza muscular y EVA",
+      "desc": "Fuerza muscular (0 a 5) por grupo y escala EVA por fecha para seguir la evolución del paciente.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/10-registro-de-fuerza-muscular-y-escala-EVA.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 29
+    },
+    {
+      "id": "pdf-mg-11",
+      "titulo": "Plan de ejercicios en casa",
+      "desc": "Plantilla imprimible con series, repeticiones, frecuencia semanal y casillas de seguimiento.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/11-plan-de-ejercicios-en-casa.xlsx",
+      "thumbnail": "",
+      "categoria": "rehabilitacion",
+      "requiereRetos": 32
+    },
+    {
+      "id": "pdf-mg-12",
+      "titulo": "Seguimiento de escalas funcionales",
+      "desc": "Registra y grafica escalas funcionales de uso común con interpretación por rango.",
+      "tipo": "excel",
+      "url": "assets/materiales-gratis/12-seguimiento-de-escalas-funcionales.xlsx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 35
+    },
+    {
+      "id": "pdf-mg-13",
+      "titulo": "Guía rápida de banderas rojas",
+      "desc": "Señales de alarma por región (lumbar, cervical, extremidades y neurológicas) y qué hacer: derivar.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/13-guia-rapida-banderas-rojas.pdf",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 38
+    },
+    {
+      "id": "pdf-mg-14",
+      "titulo": "Rangos de movimiento normales",
+      "desc": "Valores de referencia de goniometría por articulación y movimiento.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/14-guia-de-rangos-de-movimiento-normales.pdf",
+      "thumbnail": "",
+      "categoria": "anatomia",
+      "requiereRetos": 41
+    },
+    {
+      "id": "pdf-mg-15",
+      "titulo": "Escalas de valoración más usadas",
+      "desc": "Qué mide cada escala (EVA, Daniels, Ashworth, Berg, Tinetti, Barthel, Glasgow) y cómo interpretarla.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/15-escalas-de-valoracion-mas-usadas.pdf",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 44
+    },
+    {
+      "id": "pdf-mg-16",
+      "titulo": "Principios del ejercicio terapéutico",
+      "desc": "Progresión de carga, tipos de contracción, cadenas cinéticas y criterios para progresar o regresar.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/16-guia-de-ejercicio-terapeutico-principios.pdf",
+      "thumbnail": "",
+      "categoria": "rehabilitacion",
+      "requiereRetos": 47
+    },
+    {
+      "id": "pdf-mg-17",
+      "titulo": "Agentes físicos: indicaciones y precauciones",
+      "desc": "Termoterapia, crioterapia, electroterapia y ultrasonido: para qué sirven y qué precauciones tener.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/17-guia-de-agentes-fisicos-indicaciones-y-precauciones.pdf",
+      "thumbnail": "",
+      "categoria": "terapia",
+      "requiereRetos": 50
+    },
+    {
+      "id": "pdf-mg-18",
+      "titulo": "Transferencias y marcha segura",
+      "desc": "Pasos de transferencias, uso de bastón, andador y muletas, y prevención de caídas.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/18-guia-de-transferencias-y-marcha-segura.pdf",
+      "thumbnail": "",
+      "categoria": "geriatria",
+      "requiereRetos": 53
+    },
+    {
+      "id": "pdf-mg-19",
+      "titulo": "Higiene de manos y bioseguridad",
+      "desc": "Momentos de la higiene de manos, uso de guantes, limpieza de equipos y manejo de residuos.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/19-guia-de-higiene-de-manos-y-bioseguridad.pdf",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 56
+    },
+    {
+      "id": "pdf-mg-20",
+      "titulo": "Glosario de fisioterapia A-Z",
+      "desc": "Términos de fisioterapia con definición breve, en orden alfabético.",
+      "tipo": "pdf",
+      "url": "assets/materiales-gratis/20-glosario-de-fisioterapia-A-Z.pdf",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 59
+    },
+    {
+      "id": "pdf-mg-21",
+      "titulo": "Introducción a la valoración",
+      "desc": "Presentación: entrevista, inspección, palpación, movimiento, fuerza y pruebas especiales, con un caso.",
+      "tipo": "powerpoint",
+      "url": "assets/materiales-gratis/21-presentacion-introduccion-a-la-valoracion.pptx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 62
+    },
+    {
+      "id": "pdf-mg-22",
+      "titulo": "Razonamiento clínico",
+      "desc": "Presentación: de los hallazgos al plan, con hipótesis, banderas rojas, objetivos y reevaluación.",
+      "tipo": "powerpoint",
+      "url": "assets/materiales-gratis/22-presentacion-razonamiento-clinico.pptx",
+      "thumbnail": "",
+      "categoria": "fisioterapia",
+      "requiereRetos": 65
+    },
+    {
+      "id": "pdf-mg-23",
+      "titulo": "Ergonomía y postura para pacientes",
+      "desc": "Charla para pacientes sobre postura, pausas activas y ergonomía de oficina.",
+      "tipo": "powerpoint",
+      "url": "assets/materiales-gratis/23-presentacion-ergonomia-y-postura-para-pacientes.pptx",
+      "thumbnail": "",
+      "categoria": "dolor",
+      "requiereRetos": 68
+    },
+    {
+      "id": "pdf-mg-24",
+      "titulo": "Educación al paciente con dolor",
+      "desc": "Cómo explicar el dolor persistente de forma clara y tranquilizadora, con ejemplos de frases.",
+      "tipo": "powerpoint",
+      "url": "assets/materiales-gratis/24-presentacion-educacion-al-paciente-con-dolor.pptx",
+      "thumbnail": "",
+      "categoria": "dolor",
+      "requiereRetos": 71
+    }
+  ]
+}
