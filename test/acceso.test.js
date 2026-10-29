@@ -11,17 +11,17 @@ const hechos = (q, o, d, h) => Object.fromEntries([...Array(q).keys()].map(i => 
 const socio = (extra = {}) => ({ status: 'active', startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 249 }], ...extra });
 const abiertos = a => Object.entries(a.cursos).filter(([, v]) => v.abierto).map(([k]) => Number(k));
 
-test('apagado, admin o (con "solo nuevos") socio anterior a la fecha de encendido: todo abierto', () => {
+test('apagado, admin o socio antiguo (pagó antes de encenderlo): todo abierto, tal cual lo tenía', () => {
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg: {}, ahora: dia(0) }).escalonado, false);
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0), esAdmin: true }).escalonado, false);
-  const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01', escalonadoSoloNuevos: true }, ahora: dia(0) });
+  const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0) });
   assert.equal(viejo.escalonado, false);
   assert.equal(abiertos(viejo).length, 4);
 });
 
-test('por defecto la regla aplica a TODOS: un miembro anterior cuenta desde su inicio real', () => {
+test('solo si el administrador marca "aplicar a antiguos" la regla les toca; cuentan desde su primer pago', () => {
   const m = socio();
-  const cfgTodos = { ...cfg, escalonadoDesde: '2026-11-01' };
+  const cfgTodos = { ...cfg, escalonadoDesde: '2026-11-01', escalonadoParaTodos: true };
   const dia0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgTodos, ahora: dia(0) });
   assert.equal(dia0.escalonado, true); assert.deepEqual(abiertos(dia0), [abiertos(dia0)[0]]);
   const dia17 = calcularAcceso({ miembro: m, catalogo, cfg: cfgTodos, ahora: dia(17) });
@@ -36,6 +36,15 @@ test('lo que el miembro ya empezó a ver se conserva abierto aunque todavía no 
   assert.equal(con.cursos[cerrado].abierto, true); assert.equal(con.cursos[cerrado].iniciado, true);
   const otros = Object.keys(con.cursos).filter(id => id !== cerrado && !sinProgreso.cursos[id].abierto);
   assert.ok(otros.every(id => con.cursos[id].abierto === false), 'solo se conserva lo iniciado');
+});
+
+test('el calendario empieza cuando el miembro PAGA, no cuando creó su cuenta', () => {
+  const cfgNuevo = { ...cfg, escalonadoDesde: '2026-09-01' };
+  const m = { status: 'active', startDate: '2026-08-01', payments: [{ date: '2026-10-10', amount: 249 }] }; // cuenta de agosto, pagó el 10 de octubre
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11)) }); // un día después de pagar
+  assert.equal(a.escalonado, true); assert.equal(a.diaMembresia, 2); assert.equal(abiertos(a).length, 1);
+  const sinPagos = calcularAcceso({ miembro: { status: 'active', startDate: '2026-08-01', activadoEn: '2026-10-10' }, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11)) });
+  assert.equal(sinPagos.diaMembresia, 2, 'sin pagos cuenta desde la activación, no desde el alta');
 });
 
 test('una cuenta sin membresía no entra al escalonado', () => {

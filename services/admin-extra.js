@@ -143,8 +143,10 @@ function montarRutasAdminExtra(app, deps) {
       try { await bunnyGet('/collections?page=1&itemsPerPage=1'); agrega('bunny', 'Videos de los cursos (Bunny)', 'ok', 'La biblioteca responde.'); }
       catch (e) { agrega('bunny', 'Videos de los cursos (Bunny)', 'error', 'No respondió: ' + String(e && e.message).slice(0, 80)); }
     }
-    const correo = ['EMAILJS_SERVICE_ID', 'EMAILJS_TEMPLATE_ID', 'EMAILJS_PUBLIC_KEY', 'EMAILJS_PRIVATE_KEY'].every(k => env[k]);
-    agrega('correos', 'Correos', correo ? 'ok' : 'aviso', correo ? 'EmailJS configurado.' : 'EmailJS no está configurado: no salen los correos de bienvenida ni de cancelación.');
+    // Los correos del Club salen por Resend (dominio propio); EmailJS es solo el respaldo antiguo
+    const resend = Boolean(String(env.RESEND_API_KEY || '').trim() && String(env.MAIL_FROM || '').trim());
+    const emailjs = ['EMAILJS_SERVICE_ID', 'EMAILJS_TEMPLATE_ID', 'EMAILJS_PUBLIC_KEY', 'EMAILJS_PRIVATE_KEY'].every(k => env[k]);
+    agrega('correos', 'Correos', resend || emailjs ? 'ok' : 'aviso', resend ? 'Resend configurado: salen los correos de confirmación, bienvenida, cancelación y certificados.' : emailjs ? 'EmailJS configurado (respaldo antiguo). Recomendado: configura Resend con RESEND_API_KEY y MAIL_FROM.' : 'No hay servicio de correo: faltan RESEND_API_KEY y MAIL_FROM. No salen los correos de confirmación, bienvenida ni cancelación.');
     agrega('certificados', 'Certificados', env.CERT_SIGNING_KEY ? 'ok' : 'error', env.CERT_SIGNING_KEY ? 'Llave de firma configurada.' : 'Falta CERT_SIGNING_KEY: no se pueden emitir certificados.');
     const admins = String(env.ADMIN_EMAILS || 'teccapitalweb@gmail.com,fisiotec25@gmail.com').split(',').filter(s => s.trim()).length;
     agrega('admins', 'Administradores autorizados', 'ok', admins + ' correo' + (admins === 1 ? '' : 's') + ' con acceso.');

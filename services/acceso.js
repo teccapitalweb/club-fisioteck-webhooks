@@ -1,8 +1,9 @@
 // Cursos escalonados y retos que adelantan la apertura (como Alintec y Zoorigen).
 //
-// Con membresía y el escalonado activo (config/club.escalonadoActivo = true, lo enciende el administrador). Por defecto aplica a TODOS los miembros,
-// contando desde el inicio real de su membresía; lo que ya empezaron a ver se les conserva abierto. Si el administrador marca "solo miembros nuevos"
-// (config/club.escalonadoSoloNuevos = true), quienes pagaban antes de `escalonadoDesde` conservan todo abierto:
+// Con membresía y el escalonado activo (config/club.escalonadoActivo = true, lo enciende el administrador), como en Alintec y Zoorigen:
+//   - Los miembros ANTIGUOS (quienes pagaron antes de `escalonadoDesde`, la fecha en que se encendió) conservan tal cual su avance, su historial y todo lo
+//     que ya tenían abierto. Solo si el administrador marca "aplicar también a miembros antiguos" (escalonadoParaTodos = true) se les aplica la regla.
+//   - El calendario de un miembro empieza cuando PAGA (su primer pago), no cuando creó su cuenta.
 //   - El primer curso es el que el socio eligió en su prueba gratuita (o el primero del catálogo) y está abierto desde el inicio.
 //   - Cada `escalonadoDias` días (8 por defecto) se abre el siguiente curso, en el orden del catálogo.
 //   - ADELANTO POR RETOS (una sola vez): con `retosParaAdelantar` retos superados (12 por defecto, al menos 2 de cada tipo: quiz, ordena,
@@ -28,7 +29,7 @@ function configEscalonado(cfg) {
     activo: c.escalonadoActivo === true,
     dias: limitar(Math.round(Number(c.escalonadoDias)) || 8, 1, 60),
     desde: typeof c.escalonadoDesde === 'string' ? c.escalonadoDesde : null,
-    soloNuevos: c.escalonadoSoloNuevos === true,
+    paraTodos: c.escalonadoParaTodos === true,
     retosParaAdelantar: limitar(Math.round(Number(c.retosParaAdelantar)) || 12, 4, 17)
   };
 }
@@ -52,10 +53,11 @@ function fechaDe(v) {
   return isNaN(d) ? null : d;
 }
 
-// Primer día de membresía: el primer pago, o la fecha de alta si no hay pagos registrados.
+// Primer día de membresía: el primer PAGO (no la creación de la cuenta). Sin pagos registrados: el último pago, la activación del administrador o el regalo;
+// la fecha de alta de la cuenta es el último recurso.
 function inicioMembresia(m) {
   const fechas = (Array.isArray(m.payments) ? m.payments : []).map(p => fechaDe(p && p.date)).filter(Boolean).sort((a, b) => a - b);
-  return fechas[0] || fechaDe(m.membresiaInicio) || fechaDe(m.startDate) || null;
+  return fechas[0] || fechaDe(m.lastPaymentDate) || fechaDe(m.activadoEn) || fechaDe(m.giftedAt) || fechaDe(m.membresiaInicio) || fechaDe(m.startDate) || null;
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).
@@ -69,7 +71,7 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
 
   const inicio = inicioMembresia(miembro);
   const desde = fechaDe(conf.desde);
-  if (!inicio || (conf.soloNuevos && desde && inicio < desde)) return abiertoTodo('anterior');
+  if (!inicio || (!conf.paraTodos && desde && inicio < desde)) return abiertoTodo('anterior');
 
   const trial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
   const primero = trial && ids.includes(trial) ? trial : ids[0];
