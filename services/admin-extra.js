@@ -151,6 +151,8 @@ function montarRutasAdminExtra(app, deps) {
   }));
 
   // ----- Semáforo de servicios -----
+  // Proyecto de Firebase al que está conectado el servidor (para comprobar que es el mismo que se actualizó o revisó en la consola)
+  function proyectoFirebase() { try { const o = (admin && admin.app && admin.app().options) || {}; return String(o.projectId || (o.credential && o.credential.projectId) || ''); } catch (_) { return ''; } }
   async function revisar() {
     const lista = [];
     const agrega = (id, nombre, estado, detalle) => lista.push({ id, nombre, estado, detalle });
@@ -162,7 +164,7 @@ function montarRutasAdminExtra(app, deps) {
       agrega('bd', 'Base de datos y precios', 'ok', Number(c.precioMes) > 0 && Number(c.precioAno) > 0 ? 'Firestore responde. Mensual $' + c.precioMes + ' · anual $' + c.precioAno + '.' : 'Firestore responde, pero los precios no se han guardado desde el panel (se usan $249 y $1,999).');
       if (!(Number(c.precioMes) > 0)) lista[lista.length - 1].estado = 'aviso';
       agrega('visitas', 'Contador de visitas', 'ok', c.contadorVisitas === true ? 'Encendido: suma visitas por día y página.' : 'Apagado (puedes encenderlo en Encuesta y visitas).');
-    } catch (e) { agrega('bd', 'Base de datos y precios', 'error', 'No se pudo leer Firestore: ' + String(e && e.message).slice(0, 80)); }
+    } catch (e) { agrega('bd', 'Base de datos y precios', 'error', 'No se pudo leer Firestore' + (proyectoFirebase() ? ' (proyecto ' + proyectoFirebase() + ')' : '') + ': ' + String(e && e.message).slice(0, 80)); }
     agrega('stripe', 'Stripe · cobros', env.STRIPE_SECRET_KEY ? 'ok' : 'error', env.STRIPE_SECRET_KEY ? 'Llave configurada.' : 'Falta STRIPE_SECRET_KEY: no se pueden crear cobros.');
     // Portal de clientes de Stripe (cambiar tarjeta, ver facturas, cancelar): solo lectura, no crea ni cambia nada
     if (env.STRIPE_SECRET_KEY && deps.stripe && deps.stripe.billingPortal && deps.stripe.billingPortal.configurations) {
