@@ -265,3 +265,19 @@ test('los retos que ya tenía en el sistema anterior se pasan una sola vez y cue
     assert.equal((await s.llamar('/api/acceso')).cuerpo.retosSuperados, 2, 'la segunda vez no cambia nada');
   } finally { s.cerrar(); }
 });
+
+test('el calendario cuenta días del calendario en hora de México: el día del pago es el 0 y «Restan N días» baja a la medianoche', () => {
+  const miembro = { status: 'active', payments: [{ date: '2026-10-29T20:00:00Z' }] }; // 29 oct, 2 p. m. en México
+  const catalogo = { courses: [{ courseId: 1, lessons: [{}] }, { courseId: 2, lessons: [{}] }, { courseId: 3, lessons: [{}] }] };
+  const cfg = { escalonadoActivo: true, escalonadoDias: 8 };
+  const en = iso => calcularAcceso({ miembro, catalogo, cfg, retosSuperados: 0, retosHechos: {}, ahora: new Date(iso), esAdmin: false, adelantados: [], conMembresia: true });
+  assert.equal(en('2026-10-29T21:00:00Z').cursos['2'].dias, 8, 'el día del pago faltan 8');
+  assert.equal(en('2026-10-30T07:00:00Z').cursos['2'].dias, 7, 'pasada la medianoche de México, faltan 7');
+  assert.equal(en('2026-10-30T18:15:00Z').cursos['2'].dias, 7, 'todo el día siguiente siguen faltando 7');
+  assert.equal(en('2026-10-30T18:15:00Z').cursos['3'].dias, 15);
+  assert.equal(en('2026-11-06T05:59:00Z').cursos['2'].dias, 1, 'el último día antes de abrirse falta 1');
+  assert.equal(en('2026-11-06T05:59:00Z').cursos['2'].abierto, false);
+  assert.equal(en('2026-11-06T06:00:00Z').cursos['2'].abierto, true, 'se abre a las 00:00 del día 8 en México');
+  assert.equal(en('2026-11-06T06:00:00Z').cursos['3'].abierto, false);
+  assert.equal(en('2026-11-14T06:00:00Z').cursos['3'].abierto, true, 'el curso 3 se abre 8 días después');
+});

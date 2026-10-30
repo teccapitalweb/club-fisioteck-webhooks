@@ -16,6 +16,13 @@ const path = require('path');
 const { esAdminPorToken } = require('./certificados');
 
 const DIA = 864e5;
+// El calendario cuenta DÍAS DEL CALENDARIO en hora de México (el día del primer pago es el día 0; el curso 2 se abre 8 días después, a las 00:00).
+// Antes se contaban bloques de 24 horas desde la hora exacta del pago, y el contador «Restan N días» bajaba a mitad del día (y a las 6 p. m. con fechas sin hora).
+const fmtDiaMx = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
+const diaMx = f => fmtDiaMx.format(f);
+const diasEntreDias = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / DIA);
+const sumarDiasDia = (dia, n) => new Date(Date.parse(dia + 'T00:00:00Z') + n * DIA).toISOString().slice(0, 10);
+const inicioDeDiaMx = dia => new Date(dia + 'T00:00:00-06:00'); // México no usa horario de verano
 const limitar = (n, min, max) => Math.max(min, Math.min(max, n));
 
 function leerClavesRetos() {
@@ -81,15 +88,16 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const primero = trial && ids.includes(trial) ? trial : ids[0];
   const orden = [primero, ...ids.filter(id => id !== primero)];
 
-  const dias = Math.max(0, Math.floor(((ahora || new Date()) - inicio) / DIA));
+  const hoyMx = diaMx(ahora || new Date()), inicioMx = diaMx(inicio);
+  const dias = Math.max(0, diasEntreDias(inicioMx, hoyMx));
   const nRetos = retosSuperados || 0;
   const abiertos = Math.min(orden.length, 1 + Math.floor(dias / conf.dias));
 
   const cursos = {};
   orden.forEach((id, k) => {
     if (k < abiertos) { cursos[id] = { abierto: true }; return; }
-    const abreEn = new Date(inicio.getTime() + k * conf.dias * DIA);
-    cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, Math.ceil((abreEn - (ahora || new Date())) / DIA)), orden: k };
+    const diaApertura = sumarDiasDia(inicioMx, k * conf.dias), abreEn = inicioDeDiaMx(diaApertura);
+    cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, diasEntreDias(hoyMx, diaApertura)), orden: k };
   });
   // Lo que el miembro ya empezó a ver se le conserva abierto (nadie pierde un curso en marcha)
   (iniciados || []).forEach(id => { const c = cursos[String(id)]; if (c && !c.abierto) cursos[String(id)] = { abierto: true, iniciado: true }; });
