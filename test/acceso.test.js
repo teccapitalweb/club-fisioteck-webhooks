@@ -11,12 +11,13 @@ const hechos = (q, o, d, h) => Object.fromEntries([...Array(q).keys()].map(i => 
 const socio = (extra = {}) => ({ status: 'active', startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 249 }], ...extra });
 const abiertos = a => Object.entries(a.cursos).filter(([, v]) => v.abierto).map(([k]) => Number(k));
 
-test('apagado, admin o socio antiguo (pagó antes de encenderlo): todo abierto, tal cual lo tenía', () => {
+test('apagado, admin o socio antiguo (pagó antes de encenderlo): lo que ya vio sigue abierto y el resto sigue el calendario desde su pago', () => {
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg: {}, ahora: dia(0) }).escalonado, false);
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0), esAdmin: true }).escalonado, false);
   const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0) });
-  assert.equal(viejo.escalonado, false);
-  assert.equal(abiertos(viejo).length, 4);
+  assert.equal(viejo.escalonado, true); assert.equal(viejo.antiguoRenovado, true);
+  assert.equal(abiertos(viejo).length, 0, 'sin avance en ningún curso, todo entra al calendario');
+  assert.equal(abiertos(calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0), iniciados: ['1', '2', '3', '4'] })).length, 4, 'lo que ya empezó a ver se conserva');
 });
 
 test('solo si el administrador marca "aplicar a antiguos" la regla les toca; cuentan desde su primer pago', () => {
@@ -236,14 +237,13 @@ test('un miembro antiguo SIN lista de pagos pero con un cobro reciente de renova
   assert.equal(a.escalonado, false); assert.equal(abiertos(a).length, 4);
 });
 
-test('antiguos con distintos formatos de ficha: todos conservan todo abierto; el nuevo que paga después sí sigue la regla', () => {
+test('antiguos con distintos formatos de ficha: sin lista de pagos conservan todo abierto; con pagos siguen el calendario desde su último pago; el nuevo también', () => {
   const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' }, ahora = new Date(Date.UTC(2026, 9, 28, 12));
   const antiguos = [
-    { status: 'active', payments: [{ date: '2026-03-02' }, { date: '2026-10-02' }] },
     { status: 'active', startDate: '2026-02-10' },
     { status: 'active', activadoEn: '2026-05-05', startDate: '2026-04-01' },
     { status: 'active', giftedAt: '2026-06-01' },
-    { status: 'cancelled', payments: [{ date: '2026-07-01' }], accessUntil: '2026-11-30' }
+    { status: 'cancelled', startDate: '2026-07-01', accessUntil: '2026-11-30' }
   ];
   antiguos.forEach(m => { const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora }); assert.equal(a.escalonado, false, JSON.stringify(m)); assert.equal(abiertos(a).length, 4); });
   const nuevo = calcularAcceso({ miembro: { status: 'active', startDate: '2026-02-10', payments: [{ date: '2026-10-24' }] }, catalogo, cfg: cfgDesde, ahora });
@@ -314,18 +314,18 @@ test('si la membresía se vence y se vuelve a pagar: lo abierto se conserva, el 
   assert.equal(calcularAcceso({ miembro: tarde, catalogo, cfg: { escalonadoActivo: true, escalonadoDias: 8 }, retosSuperados: 0, retosHechos: {}, ahora: new Date('2026-02-10T18:00:00Z'), esAdmin: false, adelantados: [], conMembresia: true }).reanudada, false);
 });
 
-test('antiguo que renueva con el calendario encendido: conserva lo que vio y lo demás entra al calendario desde ese pago; antes de renovar tiene todo abierto', () => {
+test('antiguo con plan: conserva lo que vio y lo demás entra al calendario desde el día de su último pago', () => {
   const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
   const antiguo = pagos => ({ status: 'active', startDate: '2026-05-01', payments: pagos });
-  const sinRenovar = calcularAcceso({ miembro: antiguo([{ date: '2026-10-10', amount: 199 }]), catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 5, 12)), iniciados: ['2'] });
-  assert.equal(sinRenovar.escalonado, false); assert.equal(abiertos(sinRenovar).length, 4, 'antes de su próximo pago sigue con todo abierto');
-  const m = antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-11-10', amount: 199 }]);
-  const dia0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 10, 18)), iniciados: ['2'] });
-  assert.equal(dia0.escalonado, true); assert.deepEqual(abiertos(dia0), [2], 'lo que ya vio sigue abierto');
-  assert.equal(dia0.cursos['1'].dias, 8); assert.equal(dia0.cursos['3'].dias, 16); assert.equal(dia0.cursos['4'].dias, 24);
-  assert.equal(dia0.adelanto.estado, 'no-disponible', 'sin adelanto por retos');
-  const d9 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 18, 18)), iniciados: ['2'] });
-  assert.deepEqual(abiertos(d9), [1, 2]);
-  const d99 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2027, 1, 20, 18)), iniciados: ['2'] });
-  assert.equal(abiertos(d99).length, 4);
+  const sinPagos = calcularAcceso({ miembro: { status: 'active', startDate: '2026-05-01' }, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 5, 12)) });
+  assert.equal(sinPagos.escalonado, false); assert.equal(abiertos(sinPagos).length, 4, 'sin pagos registrados no se sabe desde cuándo contar: todo abierto');
+  const m = antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-10-27', amount: 199 }]);
+  const d0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 30, 18)), iniciados: ['2'] });
+  assert.equal(d0.escalonado, true); assert.deepEqual(abiertos(d0), [2], 'lo que ya vio sigue abierto');
+  assert.equal(d0.cursos['1'].dias, 5); assert.equal(d0.cursos['3'].dias, 13); assert.equal(d0.cursos['4'].dias, 21);
+  assert.equal(d0.adelanto.estado, 'no-disponible', 'sin adelanto por retos');
+  assert.deepEqual(abiertos(calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 4, 18)), iniciados: ['2'] })), [1, 2]);
+  assert.equal(abiertos(calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 11, 30, 18)), iniciados: ['2'] })).length, 4);
+  const vencido = calcularAcceso({ miembro: antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-11-10', amount: 199 }]), catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 10, 18)), iniciados: ['2'] });
+  assert.equal(vencido.cursos['1'].dias, 8, 'al volver a pagar cuenta desde ese pago');
 });

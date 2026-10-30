@@ -84,14 +84,14 @@ function reanudaciones(m) {
   return out;
 }
 
-// Primer pago válido (no fallido, con monto) registrado desde la fecha en que se encendió el calendario; solo cuenta la lista de pagos.
-function primerPagoDesde(m, desde) {
+// Último pago válido (no fallido, con monto) de la lista de pagos.
+function ultimoPago(m) {
   const f = (Array.isArray(m.payments) ? m.payments : []).filter(p => p && p.status !== 'failed' && p.estado !== 'failed' && !(Number(p.amount) <= 0))
-    .map(p => fechaDe(p.date)).filter(x => x && x >= desde).sort((a, b) => a - b);
+    .map(p => fechaDe(p.date)).filter(Boolean).sort((a, b) => b - a);
   return f[0] || null;
 }
 
-// Miembro antiguo que volvió a pagar con el calendario encendido: conserva lo que ya vio y el resto sigue el calendario desde ese pago.
+// Miembro antiguo: conserva lo que ya vio y el resto sigue el calendario desde el día de su último pago.
 function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, retosSuperados, retosHechos }) {
   const hoyMx = diaMx(ahora || new Date()), pivoteDia = diaMx(pivote);
   const vistos = new Set((iniciados || []).map(String));
@@ -126,9 +126,9 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const desde = fechaDe(conf.desde);
   if (!inicio) return abiertoTodo('anterior');
   if (!conf.paraTodos && desde && inicio < desde) {
-    // Miembro antiguo: todo abierto hasta su primer pago desde que se encendió el calendario. Desde ese pago, lo que ya empezó a ver se le conserva
-    // y los cursos que no ha visto entran al calendario (el primero a N días del pago, y así cada N días).
-    const pivote = primerPagoDesde(miembro, desde);
+    // Miembro antiguo: lo que ya empezó a ver se le conserva abierto y los cursos que no ha visto entran al calendario desde el día de su último pago
+    // (el primero a N días del pago, y así cada N días). Sin pagos registrados no se sabe desde cuándo contar: todo abierto.
+    const pivote = ultimoPago(miembro);
     if (!pivote) return abiertoTodo('anterior');
     return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, retosSuperados, retosHechos });
   }
