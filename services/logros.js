@@ -41,6 +41,8 @@ const BADGES = [
   { id: 'founder', nombre: 'Socio Fundador', desc: 'Ser de los primeros 50 miembros', xp: 500, cat: 'especial', ok: s => s.isFounder },
   { id: 'cert_1', nombre: 'Primer Certificado', desc: 'Obtén tu primer certificado', xp: 150, cat: 'cursos', ok: s => s.certificados >= 1 },
   { id: 'cert_3', nombre: 'Coleccionista de Certificados', desc: 'Obtén 3 certificados', xp: 400, cat: 'cursos', ok: s => s.certificados >= 3 },
+  { id: 'curso_5', nombre: 'Cinco Cursos', desc: 'Termina 5 cursos', xp: 250, cat: 'cursos', ok: s => s.completedCourses >= 5 },
+  { id: 'premio_curso', nombre: 'Cazador de Premios', desc: 'Gana 100 XP en premios por terminar cursos', xp: 150, cat: 'cursos', ok: s => s.xpCursos >= 100 },
   { id: 'resena_1', nombre: 'Voz del Club', desc: 'Califica un curso que terminaste', xp: 50, cat: 'cursos', ok: s => s.resenasHechas >= 1 },
   { id: 'reto_1', nombre: 'Primer Reto', desc: 'Supera tu primer reto', xp: 50, cat: 'especial', ok: s => s.retosHechos >= 1 },
   { id: 'reto_5', nombre: 'Retador', desc: 'Supera 5 retos distintos', xp: 150, cat: 'especial', ok: s => s.retosHechos >= 5 },
@@ -175,7 +177,7 @@ function montarRutasLogros(app, deps) {
       sectionsVisited: (st.secciones || []).length, newsRead: Math.max((st.noticias || []).length, Number(st.newsRead) || 0),
       pdfsDownloaded: Math.max((st.pdfs || []).length, Number(st.pdfsDownloaded) || 0), webinarsAttended: Math.max((st.webinars || []).length, Number(st.webinarsAttended) || 0),
       isFounder: miembro.founder === true || miembro.fundador === true,
-      invitadosValidos, certificados, resenasHechas, retosHechos: Object.keys(superados).length, retosPerfectos: Object.values(superados).filter(r => r.total > 0 && r.mejor === r.total).length
+      invitadosValidos, certificados, resenasHechas, xpCursos, retosHechos: Object.keys(superados).length, retosPerfectos: Object.values(superados).filter(r => r.total > 0 && r.mejor === r.total).length
     };
     const desbloqueadas = { ...(doc.desbloqueadas || {}) };
     const nuevas = [];
