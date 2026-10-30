@@ -39,6 +39,9 @@ const BADGES = [
   { id: 'pdf_collector', nombre: 'Coleccionista PDF', desc: 'Descarga 10 PDFs', xp: 200, cat: 'especial', ok: s => s.pdfsDownloaded >= 10 },
   { id: 'live_fan', nombre: 'En Vivo', desc: 'Asiste a un webinar', xp: 150, cat: 'especial', ok: s => s.webinarsAttended >= 1 },
   { id: 'founder', nombre: 'Socio Fundador', desc: 'Ser de los primeros 50 miembros', xp: 500, cat: 'especial', ok: s => s.isFounder },
+  { id: 'cert_1', nombre: 'Primer Certificado', desc: 'Obtén tu primer certificado', xp: 150, cat: 'cursos', ok: s => s.certificados >= 1 },
+  { id: 'cert_3', nombre: 'Coleccionista de Certificados', desc: 'Obtén 3 certificados', xp: 400, cat: 'cursos', ok: s => s.certificados >= 3 },
+  { id: 'resena_1', nombre: 'Voz del Club', desc: 'Califica un curso que terminaste', xp: 50, cat: 'cursos', ok: s => s.resenasHechas >= 1 },
   { id: 'reto_1', nombre: 'Primer Reto', desc: 'Supera tu primer reto', xp: 50, cat: 'especial', ok: s => s.retosHechos >= 1 },
   { id: 'reto_5', nombre: 'Retador', desc: 'Supera 5 retos distintos', xp: 150, cat: 'especial', ok: s => s.retosHechos >= 5 },
   { id: 'reto_perfecto', nombre: 'Sin Errores', desc: 'Responde un quiz completo sin fallar', xp: 200, cat: 'especial', ok: s => s.retosPerfectos >= 1 },
@@ -50,7 +53,7 @@ const SECCIONES = ['home', 'library', 'courses-live', 'pdfs', 'news', 'community
 const COL_CLASIFICACION = 'retosClasificacion';
 const aliasDe = nombre => { const p = String(nombre || '').trim().split(/\s+/).filter(Boolean); if (!p.length) return 'Miembro'; return p.length > 1 ? p[0].slice(0, 20) + ' ' + p[1].charAt(0).toUpperCase() + '.' : p[0].slice(0, 20); };
 const TOPE_XP_PRACTICA = 600; // lo máximo que suman en toda la vida el reto del día y las flashcards
-const XP_BIENVENIDA = 100, XP_DIA = 25, XP_CARTAS = 15, MAX_IDS = 60, MAX_XP_HEREDADO = 5000;
+const XP_BIENVENIDA = 100, XP_DIA = 6, XP_DIA_PERFECTO = 10, PREGUNTAS_DIA = 5, XP_CARTAS = 15, MAX_IDS = 60, MAX_XP_HEREDADO = 5000;
 
 const fmtDia = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
 const fmtHora = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Mexico_City', hour: '2-digit', hourCycle: 'h23' });
@@ -88,12 +91,15 @@ function leerClaves() {
   return clavesCache;
 }
 // Pregunta del día: la misma regla que usaba el Club (día / total de preguntas), ahora la decide el servidor
+// Reto del día (como Alintec y Zoorigen: un reto completo, no una sola pregunta): PREGUNTAS_DIA preguntas seguidas del banco
+// que cambian con la fecha de México. Se supera con 60 % y da XP_DIA (XP_DIA_PERFECTO sin errores) una vez al día.
 function retoDelDia(dia, claves = leerClaves()) {
   const todas = [];
   Object.keys(claves.quiz || {}).forEach(id => (claves.quiz[id] || []).forEach((c, i) => todas.push({ retoId: id, indice: i, correcta: c })));
   if (!todas.length) return null;
   const n = Math.floor(new Date(dia + 'T00:00:00Z').getTime() / 86400000);
-  return todas[n % todas.length];
+  const cuantas = Math.min(PREGUNTAS_DIA, todas.length);
+  return Array.from({ length: cuantas }, (_, k) => todas[(n * cuantas + k) % todas.length]);
 }
 
 function montarRutasLogros(app, deps) {
@@ -150,12 +156,19 @@ function montarRutasLogros(app, deps) {
     const st = doc.stats || {};
     let invitadosValidos = 0;
     try { if (deps.referidosValidosDe) invitadosValidos = Number(await deps.referidosValidosDe(uid)) || 0; } catch (_) { /* sin referidos */ }
+    // Certificados vigentes y cursos calificados (insignias Primer Certificado, Coleccionista y Voz del Club)
+    let certificados = 0, resenasHechas = 0;
+    try {
+      const [cs, rs] = await Promise.all([db.collection('certificados').where('uid', '==', uid).get(), db.collection('resenas').where('uid', '==', uid).get()]);
+      certificados = cs.docs.filter(x => (x.data() || {}).revocado !== true).length;
+      resenasHechas = rs.docs.length;
+    } catch (_) { /* sin certificados ni reseñas */ }
     const stats = {
       totalLessons, completedCourses, streak: doc.racha || 0, earlyBird: st.earlyBird === true, nightOwl: st.nightOwl === true,
       sectionsVisited: (st.secciones || []).length, newsRead: Math.max((st.noticias || []).length, Number(st.newsRead) || 0),
       pdfsDownloaded: Math.max((st.pdfs || []).length, Number(st.pdfsDownloaded) || 0), webinarsAttended: Math.max((st.webinars || []).length, Number(st.webinarsAttended) || 0),
       isFounder: miembro.founder === true || miembro.fundador === true,
-      invitadosValidos, retosHechos: Object.keys(superados).length, retosPerfectos: Object.values(superados).filter(r => r.total > 0 && r.mejor === r.total).length
+      invitadosValidos, certificados, resenasHechas, retosHechos: Object.keys(superados).length, retosPerfectos: Object.values(superados).filter(r => r.total > 0 && r.mejor === r.total).length
     };
     const desbloqueadas = { ...(doc.desbloqueadas || {}) };
     const nuevas = [];
@@ -242,21 +255,24 @@ function montarRutasLogros(app, deps) {
     if (!deps.tieneMembresia(miembro) && (miembro.trialCourseId === undefined || miembro.trialCourseId === null)) throw errorHttp(402, 'Los retos son para miembros y para quien ya eligió su curso de prueba.');
   }
   app.get('/api/retos/dia', envolver('dia', async (req, res, d) => {
-    const hoy = diaMexico(ahora()), q = retoDelDia(hoy);
-    if (!q) throw errorHttp(404, 'Todavía no hay preguntas.');
+    const hoy = diaMexico(ahora()), lista = retoDelDia(hoy);
+    if (!lista) throw errorHttp(404, 'Todavía no hay preguntas.');
     const r = (await leer(d.uid, 'retos')) || {};
-    res.json({ retoId: q.retoId, indice: q.indice, fecha: hoy, hecho: !!(r.dia && r.dia.fecha === hoy && r.dia.hecho), xp: XP_DIA });
+    const dia = r.dia && r.dia.fecha === hoy ? r.dia : null;
+    res.json({ preguntas: lista.map(q => ({ retoId: q.retoId, indice: q.indice })), fecha: hoy, hecho: !!(dia && dia.hecho), resultado: dia && dia.total ? { ok: dia.ok, total: dia.total } : null, xp: XP_DIA, xpPerfecto: XP_DIA_PERFECTO });
   }));
+  // Un intento al día: el primero que se manda es el que cuenta (con 60 % gana el XP); los siguientes del mismo día no suman.
   app.post('/api/retos/dia', envolver('dia-responder', async (req, res, d) => {
     await puedeJugar(d.uid, d);
-    const hoy = diaMexico(ahora()), q = retoDelDia(hoy), k = Number((req.body || {}).respuesta);
-    if (!q || !Number.isInteger(k) || k < 0 || k > 10) throw errorHttp(400, 'Respuesta inválida.');
+    const hoy = diaMexico(ahora()), lista = retoDelDia(hoy), resp = (req.body || {}).respuestas;
+    if (!lista || !Array.isArray(resp) || resp.length !== lista.length || !resp.every(k => Number.isInteger(k) && k >= 0 && k <= 10)) throw errorHttp(400, 'Respuestas inválidas.');
     const r = (await leer(d.uid, 'retos')) || {};
-    const yaHecho = !!(r.dia && r.dia.fecha === hoy && r.dia.hecho);
-    const acertada = k === q.correcta;
-    let xp = 0;
-    if (acertada && !yaHecho) { xp = Math.min(XP_DIA, Math.max(0, TOPE_XP_PRACTICA - (Number(r.xpExtra) || 0))); await refProg(d.uid, 'retos').set({ dia: { fecha: hoy, hecho: true }, xpExtra: (Number(r.xpExtra) || 0) + xp }, { merge: true }); }
-    res.json({ acertada, correcta: q.correcta, xp, hecho: yaHecho || acertada, estado: await estadoDe(d.uid, d) });
+    const ok = lista.reduce((t, q, i) => t + (resp[i] === q.correcta ? 1 : 0), 0), total = lista.length;
+    const supera = ok / total >= 0.6, correctas = lista.map(q => q.correcta);
+    if (r.dia && r.dia.fecha === hoy && r.dia.hecho) return res.json({ ok, total, supera, correctas, xp: 0, repetido: true, hecho: true, estado: await estadoDe(d.uid, d) });
+    const xp = supera ? Math.min(ok === total ? XP_DIA_PERFECTO : XP_DIA, Math.max(0, TOPE_XP_PRACTICA - (Number(r.xpExtra) || 0))) : 0;
+    await refProg(d.uid, 'retos').set({ dia: { fecha: hoy, hecho: true, ok, total }, xpExtra: (Number(r.xpExtra) || 0) + xp }, { merge: true });
+    res.json({ ok, total, supera, correctas, xp, hecho: true, estado: await estadoDe(d.uid, d) });
   }));
   app.post('/api/retos/cartas', envolver('cartas', async (req, res, d) => {
     await puedeJugar(d.uid, d);

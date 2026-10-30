@@ -30,9 +30,15 @@ test('el reto del día del servidor coincide con las preguntas y respuestas que 
   const claves = JSON.parse(fs.readFileSync(__dirname + '/../data/retos-claves.json', 'utf8'));
   const todas = []; D.quiz.forEach(t => t.preguntas.forEach((p, i) => todas.push({ retoId: t.id, indice: i, c: p.c })));
   for (const dia of ['2026-10-26', '2026-10-27', '2027-01-01', '2026-12-31']) {
-    const n = Math.floor(new Date(dia + 'T00:00:00Z').getTime() / 86400000), cliente = todas[n % todas.length], srv = L.retoDelDia(dia, claves);
-    assert.deepEqual([srv.retoId, srv.indice, srv.correcta], [cliente.retoId, cliente.indice, cliente.c], dia);
+    const n = Math.floor(new Date(dia + 'T00:00:00Z').getTime() / 86400000), srv = L.retoDelDia(dia, claves);
+    assert.equal(srv.length, 5, dia + ': 5 preguntas, como Alintec y Zoorigen');
+    srv.forEach((q, k) => {
+      const cliente = todas[(n * 5 + k) % todas.length];
+      assert.deepEqual([q.retoId, q.indice, q.correcta], [cliente.retoId, cliente.indice, cliente.c], dia + ' #' + k);
+    });
   }
+  const dosDias = [L.retoDelDia('2026-10-26', claves), L.retoDelDia('2026-10-27', claves)];
+  assert.notDeepEqual(dosDias[0], dosDias[1], 'cada día son preguntas distintas');
 });
 
 const tokens = { socio: { uid: 's1', email: 's@mail.com', email_verified: true }, gratis: { uid: 'g1', email: 'g@mail.com', email_verified: true } };
@@ -87,24 +93,54 @@ test('los eventos cuentan una vez por id, con tope; las secciones deben ser cono
   } finally { s.cerrar(); }
 });
 
-test('reto del día: +25 XP una sola vez al día, califica el servidor; flashcards +15 una vez al día; la cuenta sin acceso no juega', async () => {
+test('reto del día: UN intento al día (como Alintec y Zoorigen), 60 % para superarlo, 6 XP o 10 perfecto; flashcards +15 una vez', async () => {
   const s = await levantar({ 'members/s1/progress/retos': { superados: { quiz_x: { mejor: 5, total: 5, xp: 70 } } } });
   try {
     const q = (await s.llamar('/api/retos/dia')).cuerpo;
-    assert.ok(q.retoId && Number.isInteger(q.indice)); assert.equal(q.hecho, false);
-    const correcta = L.retoDelDia('2026-10-26').correcta;
-    const mala = await s.llamar('/api/retos/dia', { respuesta: (correcta + 1) % 3 });
-    assert.deepEqual([mala.cuerpo.acertada, mala.cuerpo.xp, mala.cuerpo.correcta], [false, 0, correcta]);
-    const bien = await s.llamar('/api/retos/dia', { respuesta: correcta });
-    assert.deepEqual([bien.cuerpo.acertada, bien.cuerpo.xp], [true, 25]);
-    assert.equal((await s.llamar('/api/retos/dia', { respuesta: correcta })).cuerpo.xp, 0, 'el XP del día se gana una sola vez');
+    assert.equal(q.preguntas.length, 5); assert.equal(q.hecho, false);
+    const correctas = L.retoDelDia('2026-10-26').map(x => x.correcta);
+    // primer intento con 4/5: supera (80 %) y gana 6 XP (no 10, porque no fue perfecto)
+    const casi = correctas.map((c, i) => i === 0 ? (c + 1) % 3 : c);
+    const r1 = (await s.llamar('/api/retos/dia', { respuestas: casi })).cuerpo;
+    assert.deepEqual([r1.ok, r1.total, r1.supera, r1.xp], [4, 5, true, 6]);
+    assert.deepEqual(r1.correctas, correctas, 'las respuestas correctas se muestran DESPUÉS de contestar');
+    // repetir el mismo día no cuenta, ni siquiera con todo perfecto
+    const r2 = (await s.llamar('/api/retos/dia', { respuestas: correctas })).cuerpo;
+    assert.deepEqual([r2.xp, r2.repetido], [0, true], 'un solo intento al día');
+    assert.equal((await s.llamar('/api/retos/dia')).cuerpo.hecho, true);
     assert.equal((await s.llamar('/api/retos/cartas', {})).cuerpo.xp, 15);
     assert.equal((await s.llamar('/api/retos/cartas', {})).cuerpo.xp, 0);
     const e = (await s.llamar('/api/logros')).cuerpo;
-    assert.equal(e.xpRetos, 70 + 25 + 15, 'suma retos superados + reto del día + flashcards');
+    assert.equal(e.xpRetos, 70 + 6 + 15, 'suma retos superados + reto del día + flashcards');
     assert.ok(s.db.value('members/s1/progress/retos').superados.quiz_x, 'los retos superados no se pisan');
-    assert.equal((await s.llamar('/api/retos/dia', { respuesta: correcta }, 'gratis')).status, 402);
-    assert.equal((await s.llamar('/api/retos/dia', { respuesta: 'x' })).status, 400);
+    assert.equal((await s.llamar('/api/retos/dia', { respuestas: correctas }, 'gratis')).status, 402);
+    assert.equal((await s.llamar('/api/retos/dia', { respuestas: ['x'] })).status, 400);
+  } finally { s.cerrar(); }
+});
+
+test('reto del día: con menos de 60 % el intento del día queda gastado y no da XP', async () => {
+  const s = await levantar();
+  try {
+    const correctas = L.retoDelDia('2026-10-26').map(x => x.correcta);
+    const mal = correctas.map(c => (c + 1) % 3);
+    const r = (await s.llamar('/api/retos/dia', { respuestas: mal })).cuerpo;
+    assert.deepEqual([r.ok, r.supera, r.xp, r.hecho], [0, false, 0, true], 'fallar también gasta el intento del día');
+    const r2 = (await s.llamar('/api/retos/dia', { respuestas: correctas })).cuerpo;
+    assert.deepEqual([r2.xp, r2.repetido], [0, true], 'no se puede reintentar hasta acertar');
+  } finally { s.cerrar(); }
+});
+
+test('insignias de certificados y reseñas: Primer Certificado, Coleccionista y Voz del Club las da el servidor', async () => {
+  const s = await levantar({
+    'certificados/f1': { uid: 's1', revocado: false }, 'certificados/f2': { uid: 's1', revocado: true }, 'certificados/f3': { uid: 'otro' },
+    'resenas/s1__1': { uid: 's1', cursoId: 1 }
+  });
+  try {
+    const v = (await s.llamar('/api/logros')).cuerpo;
+    const ids = v.insignias.filter(i => i.desbloqueada).map(i => i.id);
+    assert.ok(ids.includes('cert_1'), 'Primer Certificado');
+    assert.ok(ids.includes('resena_1'), 'Voz del Club');
+    assert.ok(!ids.includes('cert_3'), 'Coleccionista pide 3 vigentes (el revocado no cuenta)');
   } finally { s.cerrar(); }
 });
 
