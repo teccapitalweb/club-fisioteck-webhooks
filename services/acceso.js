@@ -92,9 +92,11 @@ function ultimoPago(m) {
 }
 
 // Miembro antiguo: conserva lo que ya vio y el resto sigue el calendario desde el día de su último pago.
-function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, retosSuperados, retosHechos }) {
+const CLASES_PARA_CONSERVAR = 2;
+function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos }) {
   const hoyMx = diaMx(ahora || new Date()), pivoteDia = diaMx(pivote);
-  const vistos = new Set((iniciados || []).map(String));
+  // Un curso cuenta como visto con al menos CLASES_PARA_CONSERVAR clases terminadas; con una sola se vuelve a cerrar y entra al calendario.
+  const vistos = new Set(avances ? Object.keys(avances).filter(id => avances[id] >= CLASES_PARA_CONSERVAR) : (iniciados || []).map(String));
   const cursos = {}; let j = 0;
   ids.forEach((id, k) => {
     if (vistos.has(id)) { cursos[id] = { abierto: true, iniciado: true }; return; }
@@ -114,7 +116,7 @@ function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados,
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).
-function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null, iniciados = [] }) {
+function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null, iniciados = [], avances = null }) {
   const conf = configEscalonado(cfg);
   const ids = (catalogo.courses || []).map(c => String(c.courseId));
   const abiertoTodo = motivo => ({ escalonado: false, motivo, cursos: Object.fromEntries(ids.map(id => [id, { abierto: true }])) });
@@ -130,7 +132,7 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     // (el primero a N días del pago, y así cada N días). Sin pagos registrados no se sabe desde cuándo contar: todo abierto.
     const pivote = ultimoPago(miembro);
     if (!pivote) return abiertoTodo('anterior');
-    return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, retosSuperados, retosHechos });
+    return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos });
   }
 
   const trial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
@@ -251,9 +253,10 @@ function montarRutasAcceso(app, deps) {
     const datosPremios = premios.exists ? (premios.data() || {}) : {};
     const progCursos = await db.collection('members').doc(uid).collection('progress').doc('courses').get();
     const datosProg = progCursos.exists ? (progCursos.data() || {}) : {};
+    const avances = Object.fromEntries(Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed)).map(k => [k.slice(2), datosProg[k].completed.length]));
     const iniciados = Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed) && datosProg[k].completed.length > 0).map(k => k.slice(2));
     const params = {
-      iniciados, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
+      iniciados, avances, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
       retosSuperados: Object.keys(retos).length, retosHechos: retos, ahora: new Date(), esAdmin: esAdminPorToken(decoded), adelantados, conMembresia: deps.tieneMembresia(miembro)
     };
     let guardado = datosPremios.adelantoRetos && datosPremios.adelantoRetos.cursoId ? String(datosPremios.adelantoRetos.cursoId) : null;

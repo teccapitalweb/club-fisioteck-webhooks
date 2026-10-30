@@ -329,3 +329,10 @@ test('antiguo con plan: conserva lo que vio y lo demás entra al calendario desd
   const vencido = calcularAcceso({ miembro: antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-11-10', amount: 199 }]), catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 10, 18)), iniciados: ['2'] });
   assert.equal(vencido.cursos['1'].dias, 8, 'al volver a pagar cuenta desde ese pago');
 });
+
+test('antiguo: con 2 clases terminadas el curso se conserva; con 1 sola vuelve a cerrarse y entra al calendario', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const m = { status: 'active', startDate: '2026-05-01', payments: [{ date: '2026-10-27', amount: 199 }] };
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 30, 18)), avances: { 1: 1, 2: 2, 3: 5 } });
+  assert.deepEqual(abiertos(a), [2, 3]); assert.equal(a.cursos['1'].abierto, false); assert.equal(a.cursos['1'].dias, 5);
+});
