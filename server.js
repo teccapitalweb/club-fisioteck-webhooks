@@ -194,7 +194,7 @@ const BUNNY_STREAM_PLAYER_HOST = (process.env.BUNNY_STREAM_PLAYER_HOST || 'https
 const BUNNY_PLAYBACK_TTL_SECONDS = Math.max(60, Math.min(Number(process.env.BUNNY_PLAYBACK_TTL_SECONDS) || 900, 3600));
 
 // Cursos creados o editados desde el panel (colección catalogoVideo): se suman al catálogo del archivo para poder reproducirse.
-// Se guardan en memoria y se refrescan cada minuto, porque varias copias del servidor pueden estar corriendo.
+// Se guardan en memoria y se refrescan cada 10 minutos (al guardar desde el panel se actualizan al instante; leer la colección cada minuto gastaba miles de lecturas al día).
 let catalogoExtra = {};
 function registrarCatalogoExtra(curso) { catalogoExtra[String(curso.courseId)] = curso; }
 async function refrescarCatalogoExtra() {
@@ -206,7 +206,7 @@ async function refrescarCatalogoExtra() {
   } catch (e) { console.error('No se pudo leer catalogoVideo:', e.message); }
 }
 refrescarCatalogoExtra();
-setInterval(refrescarCatalogoExtra, 60000).unref();
+setInterval(refrescarCatalogoExtra, 10 * 60000).unref();
 
 function loadBunnyCatalog() {
   const base = fs.existsSync(BUNNY_CATALOG_PATH) ? JSON.parse(fs.readFileSync(BUNNY_CATALOG_PATH, 'utf8')) : { libraryId: '', courses: [] };
@@ -1296,7 +1296,7 @@ require('./services/materiales').montarRutasMateriales(app, depsAcceso); // mate
 require('./services/quiz').montarRutasQuiz(app, depsAcceso); // preguntas de clase: la respuesta correcta solo la conoce el servidor
 require('./services/juegos').montarRutasJuegos(app, depsAcceso); // juegos dinámicos de clase: solo se entregan a quien tiene acceso al curso
 depsAcceso.refrescarMaterialesLibres().catch(e => console.error('materialesLibres:', e.message));
-setInterval(() => depsAcceso.refrescarMaterialesLibres().catch(() => {}), 60000).unref();
+setInterval(() => depsAcceso.refrescarMaterialesLibres().catch(() => {}), 10 * 60000).unref(); // cada 10 min: antes cada minuto leía toda la colección y gastaba miles de lecturas al día
 require('./services/rutas-publico').montarRutasPublico(app, depsAcceso); // encuesta de la portada, guía sin respuesta y visitas
 require('./services/progreso').montarRutasProgreso(app, depsAcceso);
 
