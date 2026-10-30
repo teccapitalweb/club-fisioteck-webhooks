@@ -171,17 +171,24 @@ test('certificado automático: si el nombre del perfil no sirve (una sola palabr
   } finally { s.cerrar(); }
 });
 
-test('el administrador emite de una vez los certificados de cursos ya terminados antes (sin correos); solo el administrador', async () => {
+test('miembro antiguo: ve sus cursos terminados sin certificado, confirma su nombre y se emiten con la fecha en que los terminó', async () => {
   const s = await levantar({
-    'members/u1': { name: 'Ana Torres', email: 'ana@mail.com' }, 'members/u1/progress/courses': { c_11: { completed: [0, 1] } },
-    'members/u2': { name: 'Beto', email: 'beto@mail.com' }, 'members/u2/progress/courses': { c_11: { completed: [0, 1] } },
-    'members/u3': { name: 'Carla Paz', email: 'carla@mail.com' }, 'members/u3/progress/courses': { c_11: { completed: [0] } }
+    'members/u1': { name: 'ana torres', email: 'ana@mail.com' },
+    'members/u1/progress/courses': { c_11: { completed: [0, 1], updatedAt: '2026-08-15T18:00:00.000Z' } }
   });
   try {
-    assert.equal((await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'socio' })).status, 403);
-    const r = (await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'admin' })).cuerpo;
-    assert.equal(r.miembros, 3); assert.equal(r.conCursosTerminados, 2); assert.equal(r.emitidos, 1); assert.equal(r.sinNombreValido, 1);
-    const otra = (await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'admin' })).cuerpo;
-    assert.equal(otra.emitidos, 0); assert.equal(otra.yaExistian, 1, 'no se repite');
+    assert.equal((await s.llamar('/api/certificados/pendientes')).status, 401);
+    const p = (await s.llamar('/api/certificados/pendientes', { token: 'socio' })).cuerpo;
+    assert.equal(p.pendientes.length, 1); assert.equal(p.pendientes[0].titulo, 'Curso de prueba'); assert.equal(p.pendientes[0].terminadoEn, '2026-08-15T18:00:00.000Z');
+    assert.equal(p.nombreSugerido, 'ana torres'); assert.equal(p.nombreConfirmado, false);
+    assert.equal((await s.llamar('/api/certificados/mios', { token: 'socio' })).cuerpo.certificados.length, 0, 'abrir la lista ya no emite nada solo');
+    assert.equal((await s.llamar('/api/certificados/emitir-pendientes', { metodo: 'POST', token: 'socio', cuerpo: { nombre: 'Ana' } })).status, 400, 'pide nombre y apellido');
+    const r = await s.llamar('/api/certificados/emitir-pendientes', { metodo: 'POST', token: 'socio', cuerpo: { nombre: 'ana maría torres' } });
+    assert.equal(r.status, 201); assert.equal(r.cuerpo.emitidos, 1);
+    const lista = (await s.llamar('/api/certificados/mios', { token: 'socio' })).cuerpo.certificados;
+    assert.equal(lista[0].nombre, 'Ana María Torres'); assert.equal(lista[0].emitidoEn, '2026-08-15T18:00:00.000Z', 'conserva la fecha en que terminó el curso');
+    const m = s.db.datos.get('members/u1'); assert.equal(m.name, 'Ana María Torres'); assert.ok(m.nombreCertificadoConfirmadoEn);
+    assert.equal((await s.llamar('/api/certificados/pendientes', { token: 'socio' })).cuerpo.pendientes.length, 0);
+    assert.equal((await s.llamar('/api/certificados/emitir-pendientes', { metodo: 'POST', token: 'socio', cuerpo: { nombre: 'Ana María Torres' } })).cuerpo.emitidos, 0, 'no duplica');
   } finally { s.cerrar(); }
 });

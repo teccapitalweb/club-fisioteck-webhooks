@@ -163,21 +163,46 @@ function montarRutasCertificados(app, deps) {
 
   // ----- Socio -----
   app.get('/api/certificados/mios', conSesion(async (req, res, d) => {
-    // Cursos que la persona ya terminó antes de que existieran los certificados automáticos (miembros antiguos): se emiten ahora, sin correo.
-    if (llave()) {
-      try {
-        const prog = await leerProgreso(d.uid), miembro = (await db.collection('members').doc(d.uid).get()).data() || {};
-        for (const curso of (deps.cargarCatalogo().courses || [])) {
-          const total = (curso.lessons || []).length;
-          if (total > 0 && clasesCompletadas(prog, curso.courseId, total) >= total) await emitirAuto({ uid: d.uid, email: d.email, curso, nombreCandidato: miembro.name || d.name, sinCorreo: true });
-        }
-      } catch (e) { console.warn('[certificados] retroactivos:', e && e.message); }
-    }
     const sn = await col().where('uid', '==', d.uid).get();
     const lista = sn.docs.map(x => x.data()).filter(c => !c.revocado).sort((a, b) => String(b.emitidoEn).localeCompare(String(a.emitidoEn)));
     res.json({ certificados: lista.map(certificadoPublico) });
   }));
 
+  // Cursos que la persona ya terminó pero que no tienen certificado (miembros antiguos: antes el PDF se armaba en el navegador y no quedaba registro).
+  // La fecha del certificado es la de su última clase si se guardó; el nombre lo confirma o corrige la persona antes de emitir.
+  async function pendientesDe(uid, prog) {
+    const ya = new Set((await col().where('uid', '==', uid).get()).docs.map(x => String((x.data() || {}).cursoId)));
+    const l = [];
+    for (const curso of (deps.cargarCatalogo().courses || [])) {
+      const total = (curso.lessons || []).length;
+      if (!total || clasesCompletadas(prog, curso.courseId, total) < total || ya.has(String(curso.courseId))) continue;
+      const ms = Date.parse(((prog || {})['c_' + curso.courseId] || {}).updatedAt);
+      l.push({ curso, terminadoEn: Number.isFinite(ms) && ms <= Date.now() ? new Date(ms) : null });
+    }
+    return l;
+  }
+  app.get('/api/certificados/pendientes', conSesion(async (req, res, d) => {
+    const prog = await leerProgreso(d.uid), m = (await db.collection('members').doc(d.uid).get()).data() || {};
+    const p = await pendientesDe(d.uid, prog);
+    res.json({ pendientes: p.map(x => ({ cursoId: String(x.curso.courseId), titulo: x.curso.title, terminadoEn: x.terminadoEn ? x.terminadoEn.toISOString() : null })), nombreSugerido: String(m.name || d.name || '').slice(0, 80), nombreConfirmado: !!m.nombreCertificadoConfirmadoEn });
+  }));
+  app.post('/api/certificados/emitir-pendientes', conSesion(async (req, res, d) => {
+    if (!llave()) return sinLlave(res);
+    const v = validarNombre((req.body || {}).nombre);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const p = await pendientesDe(d.uid, await leerProgreso(d.uid));
+    if (!p.length) return res.json({ emitidos: 0, certificados: [] });
+    const emitidos = [];
+    for (const x of p) {
+      const cert = construirCertificado({ uid: d.uid, curso: x.curso, nombre: v.nombre, email: d.email, origen: 'club', ahora: x.terminadoEn || new Date() }, llave());
+      await col().doc(cert.folio).set(cert); avisoCertificado(cert); emitidos.push(certificadoPublico(cert));
+    }
+    try {
+      await db.collection('members').doc(d.uid).set({ name: v.nombre, nombreCertificadoConfirmadoEn: new Date().toISOString() }, { merge: true });
+      if (admin && admin.auth && admin.auth().updateUser) await admin.auth().updateUser(d.uid, { displayName: v.nombre });
+    } catch (e) { console.warn('[certificados] no se pudo actualizar el nombre del perfil:', e && e.message); }
+    res.status(201).json({ emitidos: emitidos.length, certificados: emitidos });
+  }));
   app.post('/api/certificados/emitir', conSesion(async (req, res, d) => {
     if (!llave()) return sinLlave(res);
     const { courseId, nombre } = req.body || {};
@@ -262,28 +287,6 @@ function montarRutasCertificados(app, deps) {
     res.status(201).json({ certificado: certificadoPublico(cert) });
   }));
 
-  // Emite de una vez los certificados de los cursos que los miembros ya habían terminado ANTES de que existieran los certificados automáticos
-  // (antes el PDF se armaba en el navegador y no quedaba registro). No manda correos. Solo toma los cursos 100 % completados en su avance.
-  app.post('/api/admin/certificados/retroactivos', conAdmin(async (req, res) => {
-    if (!llave()) return sinLlave(res);
-    const catalogo = deps.cargarCatalogo(), miembros = await db.collection('members').get();
-    const r = { miembros: 0, conCursosTerminados: 0, emitidos: 0, yaExistian: 0, sinNombreValido: 0, revisados: [] };
-    for (const m of miembros.docs) {
-      r.miembros++;
-      const ficha = m.data() || {}, prog = await leerProgreso(m.id);
-      const terminados = (catalogo.courses || []).filter(c => { const n = (c.lessons || []).length; return n > 0 && clasesCompletadas(prog, c.courseId, n) >= n; });
-      if (!terminados.length) continue;
-      r.conCursosTerminados++;
-      for (const curso of terminados) {
-        try {
-          const x = await emitirAuto({ uid: m.id, email: ficha.email || '', curso, nombreCandidato: ficha.name, sinCorreo: true });
-          if (x.nuevo === true) r.emitidos++; else if (x.certificado) r.yaExistian++; else if (x.requiereNombre) r.sinNombreValido++;
-        } catch (e) { console.warn('[certificados] retroactivo', m.id, e && e.message); }
-      }
-    }
-    delete r.revisados;
-    res.json({ ok: true, ...r });
-  }));
   app.post('/api/admin/certificados/:folio/revocar', conAdmin(async (req, res, d) => {
     const ref = col().doc(normalizarFolio(req.params.folio));
     const s = await ref.get();
