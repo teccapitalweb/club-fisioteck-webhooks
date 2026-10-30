@@ -313,3 +313,19 @@ test('si la membresía se vence y se vuelve a pagar: lo abierto se conserva, el 
   const tarde = { status: 'active', payments: [{ date: '2026-01-01', concept: 'Membresía mensual', status: 'paid' }, { date: '2026-02-05', concept: 'Renovación mensual', status: 'paid' }] };
   assert.equal(calcularAcceso({ miembro: tarde, catalogo, cfg: { escalonadoActivo: true, escalonadoDias: 8 }, retosSuperados: 0, retosHechos: {}, ahora: new Date('2026-02-10T18:00:00Z'), esAdmin: false, adelantados: [], conMembresia: true }).reanudada, false);
 });
+
+test('antiguo que renueva con el calendario encendido: conserva lo que vio y lo demás entra al calendario desde ese pago; antes de renovar tiene todo abierto', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const antiguo = pagos => ({ status: 'active', startDate: '2026-05-01', payments: pagos });
+  const sinRenovar = calcularAcceso({ miembro: antiguo([{ date: '2026-10-10', amount: 199 }]), catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 5, 12)), iniciados: ['2'] });
+  assert.equal(sinRenovar.escalonado, false); assert.equal(abiertos(sinRenovar).length, 4, 'antes de su próximo pago sigue con todo abierto');
+  const m = antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-11-10', amount: 199 }]);
+  const dia0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 10, 18)), iniciados: ['2'] });
+  assert.equal(dia0.escalonado, true); assert.deepEqual(abiertos(dia0), [2], 'lo que ya vio sigue abierto');
+  assert.equal(dia0.cursos['1'].dias, 8); assert.equal(dia0.cursos['3'].dias, 16); assert.equal(dia0.cursos['4'].dias, 24);
+  assert.equal(dia0.adelanto.estado, 'no-disponible', 'sin adelanto por retos');
+  const d9 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 18, 18)), iniciados: ['2'] });
+  assert.deepEqual(abiertos(d9), [1, 2]);
+  const d99 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2027, 1, 20, 18)), iniciados: ['2'] });
+  assert.equal(abiertos(d99).length, 4);
+});
