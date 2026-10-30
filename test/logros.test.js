@@ -223,3 +223,13 @@ test('regalo de bienvenida: cuentas antiguas y administradores no lo reciben; la
     assert.equal((await s.llamar('/api/logros/bienvenida', {})).cuerpo.premioNuevo, false, 'una sola vez');
   } finally { s.cerrar(); delete tokens.adm; }
 });
+
+test('XP por curso terminado: 20, 30… 100, 180 en el décimo y el ciclo se repite; solo cuentan los terminados desde la fecha de inicio', () => {
+  const { recompensaCurso, bonoCursos, BONOS_DESDE_MS } = require('../services/logros');
+  assert.deepEqual([1, 2, 3, 9, 10, 11, 20].map(recompensaCurso), [20, 30, 40, 100, 180, 20, 180]);
+  assert.equal(recompensaCurso(0), 0);
+  const despues = BONOS_DESDE_MS + 1000, antes = BONOS_DESDE_MS - 1000;
+  assert.equal(bonoCursos([despues, despues + 5]), 20 + 30);
+  assert.equal(bonoCursos([antes, despues]), 30, 'el curso viejo ocupa el lugar 1 pero no da XP');
+  assert.equal(bonoCursos([]), 0);
+});

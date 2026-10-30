@@ -53,6 +53,11 @@ const SECCIONES = ['home', 'library', 'courses-live', 'pdfs', 'news', 'community
 const COL_CLASIFICACION = 'retosClasificacion';
 const aliasDe = nombre => { const p = String(nombre || '').trim().split(/\s+/).filter(Boolean); if (!p.length) return 'Miembro'; return p.length > 1 ? p[0].slice(0, 20) + ' ' + p[1].charAt(0).toUpperCase() + '.' : p[0].slice(0, 20); };
 const TOPE_XP_PRACTICA = 600; // lo máximo que suman en toda la vida el reto del día y las flashcards
+// Premio de XP por cada curso terminado (como Alintec): 20, 30, 40… 100 y 180 en el curso 10; el ciclo se repite. Solo cuentan los cursos terminados desde BONOS_DESDE_MS (nadie recibe XP retroactivo por cursos viejos).
+const RECOMPENSA_CURSO = [20, 30, 40, 50, 60, 70, 80, 90, 100, 180];
+const BONOS_DESDE_MS = Date.parse('2026-10-30T06:00:00Z');
+function recompensaCurso(ordinal) { const n = Math.floor(Number(ordinal)); return n >= 1 ? RECOMPENSA_CURSO[(n - 1) % RECOMPENSA_CURSO.length] : 0; }
+function bonoCursos(fechasMs) { return (Array.isArray(fechasMs) ? fechasMs : []).map(Number).filter(Number.isFinite).sort((a, b) => a - b).reduce((t, ms, i) => t + (ms >= BONOS_DESDE_MS ? recompensaCurso(i + 1) : 0), 0); }
 const XP_BIENVENIDA = 100, XP_DIA = 6, XP_DIA_PERFECTO = 10, PREGUNTAS_DIA = 5, XP_CARTAS = 15, MAX_IDS = 60, MAX_XP_HEREDADO = 5000;
 
 const fmtDia = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -147,10 +152,12 @@ function montarRutasLogros(app, deps) {
     const miembro = mSnap.exists ? (mSnap.data() || {}) : {};
     const catalogo = deps.cargarCatalogo();
     let totalLessons = 0, completedCourses = 0;
+    const fechasCursos = [];
     (catalogo.courses || []).forEach(c => {
       const total = (c.lessons || []).length, hechas = clasesCompletadas(progreso || {}, c.courseId, total);
-      totalLessons += hechas; if (total > 0 && hechas >= total) completedCourses++;
+      totalLessons += hechas; if (total > 0 && hechas >= total) { completedCourses++; fechasCursos.push(Date.parse(((progreso || {})['c_' + c.courseId] || {}).updatedAt) || 0); }
     });
+    const xpCursos = bonoCursos(fechasCursos);
     let superados = (retos && retos.superados) || {};
     if (deps.leerRetosSuperados && !(retos && retos.heredado)) { try { superados = await deps.leerRetosSuperados(uid); } catch (_) { /* se queda con lo que había */ } }
     const st = doc.stats || {};
@@ -176,7 +183,7 @@ function montarRutasLogros(app, deps) {
     // Campana: un aviso por cada insignia nueva (como Zoorigen); nunca interrumpe el cálculo
     if (nuevas.length) { const { crearAviso } = require('./avisos'); nuevas.forEach(id => { const b = BADGES.find(x => x.id === id); if (b) crearAviso(db, uid, 'insignia_' + id, { tipo: 'logro', titulo: '¡Nueva insignia! ' + b.nombre, texto: b.desc + ' · +' + b.xp + ' XP', pagina: 'achievements' }); }); }
     const xpInsignias = BADGES.reduce((t, b) => t + (desbloqueadas[b.id] ? b.xp : 0), 0);
-    const xpRetos = Object.entries(superados).reduce((t, [id, r]) => t + xpDeReto(id, r), 0) + Math.min(Number(retos && retos.xpExtra) || 0, TOPE_XP_PRACTICA) + (Number(doc.xpHeredado) || 0) + (doc.bienvenida ? XP_BIENVENIDA : 0);
+    const xpRetos = Object.entries(superados).reduce((t, [id, r]) => t + xpDeReto(id, r), 0) + Math.min(Number(retos && retos.xpExtra) || 0, TOPE_XP_PRACTICA) + (Number(doc.xpHeredado) || 0) + (doc.bienvenida ? XP_BIENVENIDA : 0) + xpCursos;
     const xp = xpInsignias + xpRetos;
     // Clasificación del club: solo nombre público (nombre y la inicial del apellido), avatar elegido, XP y retos superados. Se actualiza si algo cambió.
     const alias = aliasDe(miembro.name || d.name || ''), avatar = /^a(0[1-9]|1[0-6])$/.test(String(miembro.avatar || '')) ? miembro.avatar : '', oculto = miembro.rankingOculto === true;
@@ -189,7 +196,7 @@ function montarRutasLogros(app, deps) {
       xp, xpInsignias, xpRetos, nivel: nivelDe(xp), racha: doc.racha || 0,
       insignias: BADGES.map(b => ({ id: b.id, nombre: b.nombre, desc: b.desc, xp: b.xp, cat: b.cat, desbloqueada: !!desbloqueadas[b.id], fecha: desbloqueadas[b.id] && desbloqueadas[b.id] !== 'anterior' ? desbloqueadas[b.id] : null })),
       stats: { cursosCompletos: completedCourses, clases: totalLessons, retosSuperados: stats.retosHechos, retosPerfectos: stats.retosPerfectos, secciones: stats.sectionsVisited, noticias: stats.newsRead },
-      hechos: superados, nuevas, bienvenida: !!doc.bienvenida, xpBienvenida: XP_BIENVENIDA
+      hechos: superados, nuevas, bienvenida: !!doc.bienvenida, xpBienvenida: XP_BIENVENIDA, xpCursos
     };
   }
   deps.estadoLogros = estadoDe;
@@ -285,4 +292,4 @@ function montarRutasLogros(app, deps) {
   }));
 }
 
-module.exports = { TOPE_XP_PRACTICA, montarRutasLogros, LEVELS, BADGES, nivelDe, xpDeReto, actualizarRacha, retoDelDia, diaMexico };
+module.exports = { RECOMPENSA_CURSO, BONOS_DESDE_MS, recompensaCurso, bonoCursos, TOPE_XP_PRACTICA, montarRutasLogros, LEVELS, BADGES, nivelDe, xpDeReto, actualizarRacha, retoDelDia, diaMexico };

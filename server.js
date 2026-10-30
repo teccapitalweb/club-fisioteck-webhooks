@@ -1280,6 +1280,8 @@ require('./services/creditos').montarRutasCreditos(app, depsAcceso); // crédito
 require('./services/directorio').montarRutasDirectorio(app, depsAcceso); // directorio VIP: contacto privado, VIP verificado y certificados
 require('./services/cuenta').montarRutasCuenta(app, { db, admin, stripe, tieneMembresia: memberHasPremiumAccess }); // eliminar mi cuenta (borra todo lo de la persona)
 require('./services/admin-miembros').montarRutasAdminMiembros(app, { db, admin, stripe }); // pagos desde Stripe, papelera de miembros y retos y XP del panel
+require('./services/avisos-config').montarRutasAvisosConfig(app, { db, admin }); // aviso global del Club, «clases en vivo pronto» y avisos a todos desde el panel
+require('./services/foro-admin').montarRutasForoAdmin(app, { db, admin }); // moderación del foro y temas oficiales del equipo
 require('./services/avisos').montarRutasAvisos(app, { db, admin }); // avisos personales de la campana (respuestas del foro)
 require('./services/webinars').montarRutasWebinars(app, depsAcceso); // clases en vivo: enlace y grabación solo para miembros (nunca en content.json)
 require('./services/libros').montarRutasLibros(app, depsAcceso); // libros de lectura que se abren con retos

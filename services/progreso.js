@@ -104,6 +104,18 @@ function montarRutasProgreso(app, deps) {
       await ref(d.uid).set({ ['c_' + curso.courseId]: { completed, updatedAt: new Date().toISOString() } }, { merge: true });
       const respuesta = { cursoId: curso.courseId, completed, total, hechas: completed.length, completo: completed.length >= total };
       // Al terminar el curso el certificado se emite solo (como Alintec Food). El Club pregunta el nombre una vez, antes de enseñarlo.
+      // XP por curso terminado (como Alintec): el servidor lo suma al total en services/logros.js; aquí solo se avisa del premio
+      if (respuesta.completo && !yaEstabaCompleto) {
+        try {
+          const L = require('./logros'), todos = await ref(d.uid).get(), prog = todos.exists ? (todos.data() || {}) : {};
+          const ordinal = (deps.cargarCatalogo().courses || []).filter(c => { const n = (c.lessons || []).length; return n > 0 && lista(prog, c).length >= n; }).length;
+          const xpGanado = L.recompensaCurso(ordinal);
+          if (xpGanado > 0 && Date.now() >= L.BONOS_DESDE_MS) {
+            respuesta.bono = { xp: xpGanado, ordinal };
+            require('./avisos').crearAviso(db, d.uid, 'bonoxp_' + curso.courseId, { tipo: 'logro', titulo: '+' + xpGanado + ' XP por tu curso', texto: 'Completaste tu curso número ' + ordinal + ' y ganaste ' + xpGanado + ' XP.', enlace: 'logros' }).catch(() => {});
+          }
+        } catch (e) { console.warn('[progreso] XP del curso:', e && e.message); }
+      }
       if (respuesta.completo && !yaEstabaCompleto && deps.emitirCertificadoAuto) {
         try { Object.assign(respuesta, await deps.emitirCertificadoAuto({ uid: d.uid, email: d.email, curso, nombreCandidato: miembro.name })); }
         catch (e) { console.warn('[progreso] certificado automático:', e && e.message); }
