@@ -56,7 +56,7 @@ function progresoAdelanto(superados, necesarios) {
 function fechaDe(v) {
   if (!v) return null;
   if (typeof v.toDate === 'function') return v.toDate();
-  const d = new Date(String(v).length === 10 ? v + 'T00:00:00Z' : v);
+  const d = new Date(String(v).length === 10 ? v + 'T12:00:00Z' : v); // una fecha sin hora cae a mediodía UTC: en México sigue siendo ese mismo día
   return isNaN(d) ? null : d;
 }
 
@@ -69,6 +69,19 @@ function inicioMembresia(m) {
   const menor = lista => { const f = lista.map(fechaDe).filter(Boolean).sort((x, y) => x - y); return f[0] || null; };
   const pagos = menor((Array.isArray(m.payments) ? m.payments : []).map(p => p && p.date));
   return pagos || menor([m.activadoEn, m.giftedAt, m.membresiaInicio]) || menor([m.lastPaymentDate, m.startDate]);
+}
+
+// Vencimientos con reactivación (como Alintec): si entre un pago y el siguiente pasó más que el periodo pagado (más una gracia de 7 días), la membresía se venció
+// y luego se volvió a pagar. Devuelve [{ vencioDia, reanudoDia }] en días de México.
+function reanudaciones(m) {
+  const pagos = (Array.isArray(m.payments) ? m.payments : []).filter(p => p && p.status !== 'failed' && p.estado !== 'failed' && !(Number(p.amount) <= 0))
+    .map(p => ({ f: fechaDe(p.date), anual: /anual/i.test(String(p.concept || p.plan || '')) || (!p.concept && !p.plan && m.plan === 'anual') })).filter(p => p.f).sort((a, b) => a.f - b.f);
+  const out = [];
+  for (let i = 1; i < pagos.length; i++) {
+    const cubre = pagos[i - 1].anual ? 366 : 31, fin = new Date(pagos[i - 1].f.getTime() + cubre * DIA);
+    if (pagos[i].f - fin > 7 * DIA) out.push({ vencioDia: diaMx(fin), reanudoDia: diaMx(pagos[i].f) });
+  }
+  return out;
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).
@@ -91,12 +104,20 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const hoyMx = diaMx(ahora || new Date()), inicioMx = diaMx(inicio);
   const dias = Math.max(0, diasEntreDias(inicioMx, hoyMx));
   const nRetos = retosSuperados || 0;
-  const abiertos = Math.min(orden.length, 1 + Math.floor(dias / conf.dias));
+  // Día en que se abre cada curso: el primero (la prueba) desde el pago; los demás cada N días. Si la membresía se venció y se volvió a pagar,
+  // lo que ya estaba abierto al vencer se conserva y los que seguían cerrados se vuelven a fechar: el primero a N días de la reactivación y los demás cada N días.
+  const aperturaDia = orden.map((_, k) => sumarDiasDia(inicioMx, k * conf.dias));
+  const ciclos = reanudaciones(miembro);
+  ciclos.forEach(c => {
+    const abiertosAlVencer = aperturaDia.filter(d => d <= c.vencioDia).length;
+    for (let k = abiertosAlVencer, j = 1; k < orden.length; k++, j++) aperturaDia[k] = sumarDiasDia(c.reanudoDia, j * conf.dias);
+  });
+  const abiertos = aperturaDia.filter(d => d <= hoyMx).length;
 
   const cursos = {};
   orden.forEach((id, k) => {
     if (k < abiertos) { cursos[id] = { abierto: true }; return; }
-    const diaApertura = sumarDiasDia(inicioMx, k * conf.dias), abreEn = inicioDeDiaMx(diaApertura);
+    const diaApertura = aperturaDia[k], abreEn = inicioDeDiaMx(diaApertura);
     cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, diasEntreDias(hoyMx, diaApertura)), orden: k };
   });
   // Lo que el miembro ya empezó a ver se le conserva abierto (nadie pierde un curso en marcha)
@@ -106,13 +127,16 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   // Curso abierto con el adelanto por retos (una sola vez)
   if (adelantoRetos && cursos[String(adelantoRetos)]) cursos[String(adelantoRetos)] = { abierto: true, porRetos: true };
   const prog = progresoAdelanto(retosHechos, conf.retosParaAdelantar);
-  const candidato = orden.find(id => cursos[id] && !cursos[id].abierto) || null;
-  const adelanto = adelantoRetos ? { estado: 'usado', cursoId: String(adelantoRetos), ...prog } : candidato ? { estado: 'disponible', cursoId: candidato, ...prog } : { estado: 'sin-cursos', cursoId: null, ...prog };
+  // Los retos solo adelantan el PRIMER curso de los N días (el que sigue a la prueba) y solo en la primera membresía: quien vuelve a pagar tras vencerse ya no puede adelantar con retos.
+  const candidato = orden[1] && cursos[orden[1]] && !cursos[orden[1]].abierto ? orden[1] : null;
+  const adelanto = adelantoRetos ? { estado: 'usado', cursoId: String(adelantoRetos), ...prog }
+    : ciclos.length ? { estado: 'no-disponible', motivo: 'renovacion', cursoId: null, ...prog }
+    : candidato ? { estado: 'disponible', cursoId: candidato, ...prog } : { estado: 'sin-cursos', cursoId: null, ...prog };
   return {
     escalonado: true, diasEntreCursos: conf.dias, retosParaAdelantar: conf.retosParaAdelantar,
     retosSuperados: nRetos, adelantos: adelantoRetos ? 1 : 0, adelanto,
     retosParaSiguiente: adelanto.estado === 'disponible' ? Math.max(0, conf.retosParaAdelantar - prog.total) : null,
-    abiertos, total: orden.length, orden, cursos,
+    abiertos, total: orden.length, orden, cursos, reanudada: ciclos.length > 0,
     inicio: inicio.toISOString(), diaMembresia: dias + 1
   };
 }

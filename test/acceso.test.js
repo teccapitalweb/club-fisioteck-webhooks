@@ -5,7 +5,7 @@ const { calcularAcceso, calificarQuiz, calificarOrden, montarRutasAcceso, config
 const { montarRutasProgreso } = require('../services/progreso');
 
 const catalogo = { courses: [1, 2, 3, 4].map(id => ({ courseId: id, title: 'C' + id, lessons: [{ isPreview: true }, {}, {}] })) };
-const dia = n => new Date(Date.UTC(2026, 9, 1) + n * 864e5);
+const dia = n => new Date(Date.UTC(2026, 9, 1) + n * 864e5 + 12 * 36e5); // mediodía UTC = 6 a. m. en México: el mismo día del calendario
 const cfg = { escalonadoActivo: true, escalonadoDias: 8, retosParaAdelantar: 12 };
 const hechos = (q, o, d, h) => Object.fromEntries([...Array(q).keys()].map(i => ['q-' + i, {}]).concat([...Array(o).keys()].map(i => ['o-' + i, {}]), [...Array(d).keys()].map(i => ['d-' + i, {}]), [...Array(h).keys()].map(i => ['h-' + i, {}])));
 const socio = (extra = {}) => ({ status: 'active', startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 249 }], ...extra });
@@ -41,9 +41,9 @@ test('lo que el miembro ya empezó a ver se conserva abierto aunque todavía no 
 test('el calendario empieza cuando el miembro PAGA, no cuando creó su cuenta', () => {
   const cfgNuevo = { ...cfg, escalonadoDesde: '2026-09-01' };
   const m = { status: 'active', startDate: '2026-08-01', payments: [{ date: '2026-10-10', amount: 249 }] }; // cuenta de agosto, pagó el 10 de octubre
-  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11)) }); // un día después de pagar
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11, 12)) }); // un día después de pagar
   assert.equal(a.escalonado, true); assert.equal(a.diaMembresia, 2); assert.equal(abiertos(a).length, 1);
-  const sinPagos = calcularAcceso({ miembro: { status: 'active', startDate: '2026-08-01', activadoEn: '2026-10-10' }, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11)) });
+  const sinPagos = calcularAcceso({ miembro: { status: 'active', startDate: '2026-08-01', activadoEn: '2026-10-10' }, catalogo, cfg: cfgNuevo, ahora: new Date(Date.UTC(2026, 9, 11, 12)) });
   assert.equal(sinPagos.diaMembresia, 2, 'sin pagos cuenta desde la activación, no desde el alta');
 });
 
@@ -237,7 +237,7 @@ test('un miembro antiguo SIN lista de pagos pero con un cobro reciente de renova
 });
 
 test('antiguos con distintos formatos de ficha: todos conservan todo abierto; el nuevo que paga después sí sigue la regla', () => {
-  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' }, ahora = new Date(Date.UTC(2026, 9, 28));
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' }, ahora = new Date(Date.UTC(2026, 9, 28, 12));
   const antiguos = [
     { status: 'active', payments: [{ date: '2026-03-02' }, { date: '2026-10-02' }] },
     { status: 'active', startDate: '2026-02-10' },
@@ -280,4 +280,36 @@ test('el calendario cuenta días del calendario en hora de México: el día del 
   assert.equal(en('2026-11-06T06:00:00Z').cursos['2'].abierto, true, 'se abre a las 00:00 del día 8 en México');
   assert.equal(en('2026-11-06T06:00:00Z').cursos['3'].abierto, false);
   assert.equal(en('2026-11-14T06:00:00Z').cursos['3'].abierto, true, 'el curso 3 se abre 8 días después');
+});
+
+test('los retos solo adelantan el primer curso de los 8 días; si ya se abrió por fecha, ya no hay adelanto', () => {
+  const catalogo = { courses: Array.from({ length: 6 }, (_, i) => ({ courseId: i + 1, lessons: [{}] })) };
+  const miembro = { status: 'active', payments: [{ date: '2026-10-01', concept: 'Membresía mensual', status: 'paid' }] };
+  const en = iso => calcularAcceso({ miembro, catalogo, cfg: { escalonadoActivo: true, escalonadoDias: 8 }, retosSuperados: 0, retosHechos: {}, ahora: new Date(iso), esAdmin: false, adelantados: [], conMembresia: true });
+  const a = en('2026-10-03T18:00:00Z');
+  assert.equal(a.adelanto.estado, 'disponible'); assert.equal(a.adelanto.cursoId, '2', 'es el primer curso de los 8 días');
+  const b = en('2026-10-10T18:00:00Z'); // el curso 2 ya se abrió por fecha; el 3 todavía no
+  assert.equal(b.cursos['2'].abierto, true); assert.equal(b.cursos['3'].abierto, false);
+  assert.equal(b.adelanto.estado, 'sin-cursos', 'ya no se adelanta ningún otro curso con retos');
+});
+
+test('si la membresía se vence y se vuelve a pagar: lo abierto se conserva, el calendario se reinicia con los 8 días y ya no hay adelanto por retos', () => {
+  const catalogo = { courses: Array.from({ length: 14 }, (_, i) => ({ courseId: i + 1, lessons: [{}] })) };
+  // Pagó el 1 de enero y renovó el 31; luego dejó de pagar y volvió el 20 de abril
+  const miembro = { status: 'active', payments: [
+    { date: '2026-01-01', concept: 'Membresía mensual', status: 'paid' }, { date: '2026-01-31', concept: 'Renovación mensual', status: 'paid' },
+    { date: '2026-04-20', concept: 'Membresía mensual', status: 'paid' }] };
+  const en = iso => calcularAcceso({ miembro, catalogo, cfg: { escalonadoActivo: true, escalonadoDias: 8, retosParaAdelantar: 12 }, retosSuperados: 0, retosHechos: {}, ahora: new Date(iso), esAdmin: false, adelantados: [], conMembresia: true });
+  const a = en('2026-04-25T18:00:00Z');
+  assert.equal(a.reanudada, true);
+  // Al vencer (3 de marzo) iban abiertos 8 cursos (días 0, 8, 16… 56): se conservan
+  [1, 2, 3, 4, 5, 6, 7, 8].forEach(id => assert.equal(a.cursos[String(id)].abierto, true, 'curso ' + id + ' conservado'));
+  assert.equal(a.cursos['9'].abierto, false); assert.equal(a.cursos['9'].dias, 3, 'el primero cerrado se abre a 8 días de volver a pagar (28 de abril)');
+  assert.equal(a.cursos['10'].dias, 11); assert.equal(a.cursos['11'].dias, 19);
+  assert.equal(en('2026-04-28T06:00:00Z').cursos['9'].abierto, true);
+  assert.equal(a.adelanto.estado, 'no-disponible', 'tras volver a pagar ya no se adelanta con retos');
+  assert.equal(a.retosParaSiguiente, null);
+  // Un pago un poco tarde (dentro de la gracia) no cuenta como vencimiento
+  const tarde = { status: 'active', payments: [{ date: '2026-01-01', concept: 'Membresía mensual', status: 'paid' }, { date: '2026-02-05', concept: 'Renovación mensual', status: 'paid' }] };
+  assert.equal(calcularAcceso({ miembro: tarde, catalogo, cfg: { escalonadoActivo: true, escalonadoDias: 8 }, retosSuperados: 0, retosHechos: {}, ahora: new Date('2026-02-10T18:00:00Z'), esAdmin: false, adelantados: [], conMembresia: true }).reanudada, false);
 });
