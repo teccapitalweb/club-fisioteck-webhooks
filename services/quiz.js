@@ -98,6 +98,27 @@ function montarRutasQuiz(app, deps) {
     res.json({ acertada, correcta: q.correcta });
   }));
 
+  // Las preguntas de una clase (sin la respuesta correcta) para quien tiene acceso al curso. El Club las usa cuando el sitio público (content.json)
+  // todavía no las trae: así la tarjeta de preguntas sale aunque el contenido no se haya vuelto a publicar.
+  //  GET /api/cursos/:cursoId/clases/:indice/preguntas  →  { preguntas: [{ tipo, pregunta, opciones? }] }
+  app.get('/api/cursos/:cursoId/clases/:indice/preguntas', envolver('entregar', false, async (req, res, d) => {
+    const cursoId = String(req.params.cursoId), i = Number(req.params.indice);
+    if (!Number.isInteger(i) || i < 0) throw errorHttp(400, 'Datos inválidos.');
+    if (!esAdminPorToken(d)) {
+      const mSnap = await db.collection('members').doc(d.uid).get();
+      const miembro = mSnap.exists ? (mSnap.data() || {}) : {};
+      const prueba = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null && String(miembro.trialCourseId) === cursoId;
+      if (!deps.tieneMembresia(miembro) && !prueba) throw errorHttp(402, 'Las preguntas son parte de la membresía.');
+      if (deps.tieneMembresia(miembro) && deps.evaluarAcceso) {
+        const { acceso } = await deps.evaluarAcceso(d.uid, d);
+        const info = acceso.cursos && acceso.cursos[cursoId];
+        if (info && !info.abierto) throw errorHttp(403, 'Este curso todavía no se abre para ti.');
+      }
+    }
+    const lista = (await leer(cursoId))[String(i)] || [];
+    res.json({ preguntas: lista.map((q, k) => ({ tipo: q.tipo, pregunta: q.pregunta, opciones: q.tipo === 'vof' ? undefined : q.opciones, _k: k })) });
+  }));
+
   app.get('/api/admin/preguntas-curso/:cursoId', envolver('admin-leer', true, async (req, res) => { res.json({ clases: await leer(req.params.cursoId) }); }));
   app.put('/api/admin/preguntas-curso/:cursoId', envolver('admin-guardar', true, async (req, res, d) => {
     const cursoId = String(req.params.cursoId);

@@ -79,3 +79,16 @@ test('el quiz guarda quién acertó qué (el servidor lo usa para exigir las pre
     assert.equal(s.db.datos.has('members/a1/progress/quiz'), false);
   } finally { s.cerrar(); }
 });
+
+test('el servidor entrega las preguntas de la clase sin revelar la correcta, solo con acceso', async () => {
+  const s = await levantar();
+  try {
+    const r = await s.llamar('/api/cursos/1/clases/0/preguntas');
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.preguntas.length, 2);
+    assert.deepEqual(r.cuerpo.preguntas[0], { tipo: 'multiple', pregunta: '¿A?', opciones: ['x', 'y', 'z'], _k: 0 });
+    assert.equal(JSON.stringify(r.cuerpo).includes('correcta'), false, 'no se filtra la respuesta');
+    assert.equal((await s.llamar('/api/cursos/1/clases/0/preguntas', null, 'prueba')).status, 200, 'la prueba gratuita de ese curso también');
+    assert.equal((await s.llamar('/api/cursos/1/clases/0/preguntas', null, 'gratis')).status, 402);
+    assert.deepEqual((await s.llamar('/api/cursos/1/clases/5/preguntas')).cuerpo.preguntas, [], 'clase sin preguntas');
+  } finally { s.cerrar(); }
+});

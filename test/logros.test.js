@@ -63,9 +63,9 @@ test('insignias por clases y cursos terminados según el avance guardado por el 
     const v = (await s.llamar('/api/logros/visita', {})).cuerpo;
     assert.equal(v.racha, 1);
     const ids = v.insignias.filter(i => i.desbloqueada).map(i => i.id).sort();
-    assert.deepEqual(ids, ['first_class', 'first_course'], '3 clases y 2 cursos completos');
-    assert.equal(v.xp, 200); assert.equal(v.nivel.nombre, 'Estudiante');
-    assert.deepEqual(v.nuevas.sort(), ['first_class', 'first_course']);
+    assert.deepEqual(ids, ['curso_2', 'first_class', 'first_course'], '3 clases y 2 cursos completos');
+    assert.equal(v.xp, 400); assert.equal(v.nivel.nombre, 'Estudiante');
+    assert.deepEqual(v.nuevas.sort(), ['curso_2', 'first_class', 'first_course']);
     const otra = (await s.llamar('/api/logros/visita', {})).cuerpo;
     assert.equal(otra.racha, 1, 'visitar otra vez el mismo día no suma'); assert.deepEqual(otra.nuevas, []);
     assert.equal(s.db.value('members/s1/progress/logros').desbloqueadas.first_course.startsWith('2026-10-26'), true);

@@ -49,7 +49,23 @@ const BADGES = [
   { id: 'reto_perfecto', nombre: 'Sin Errores', desc: 'Responde un quiz completo sin fallar', xp: 200, cat: 'especial', ok: s => s.retosPerfectos >= 1 },
   // Comunidad: cuentan los invitados que ya confirmaron su correo (como Zoorigen)
   { id: 'embajador', nombre: 'Embajador', desc: 'Invita a 1 persona que confirme su cuenta', xp: 60, cat: 'especial', ok: s => s.invitadosValidos >= 1 },
-  { id: 'manada_crece', nombre: 'La manada crece', desc: 'Invita a 4 personas que confirmen su cuenta', xp: 150, cat: 'especial', ok: s => s.invitadosValidos >= 4 }
+  { id: 'manada_crece', nombre: 'La manada crece', desc: 'Invita a 4 personas que confirmen su cuenta', xp: 150, cat: 'especial', ok: s => s.invitadosValidos >= 4 },
+  // Más insignias (clases, certificados, constancia, retos y comunidad)
+  { id: 'curso_2', nombre: 'Doble Curso', desc: 'Termina 2 cursos', xp: 200, cat: 'cursos', ok: s => s.completedCourses >= 2 },
+  { id: 'clases_10', nombre: 'Constante', desc: 'Completa 10 clases', xp: 100, cat: 'cursos', ok: s => s.totalLessons >= 10 },
+  { id: 'clases_25', nombre: 'Aplicado', desc: 'Completa 25 clases', xp: 200, cat: 'cursos', ok: s => s.totalLessons >= 25 },
+  { id: 'clases_50', nombre: 'Estudioso', desc: 'Completa 50 clases', xp: 350, cat: 'cursos', ok: s => s.totalLessons >= 50 },
+  { id: 'clases_100', nombre: 'Maratonista', desc: 'Completa 100 clases', xp: 600, cat: 'cursos', ok: s => s.totalLessons >= 100 },
+  { id: 'cert_5', nombre: 'Archivo Profesional', desc: 'Obtén 5 certificados', xp: 600, cat: 'cursos', ok: s => s.certificados >= 5 },
+  { id: 'resena_3', nombre: 'Crítico Constructivo', desc: 'Califica 3 cursos que terminaste', xp: 150, cat: 'cursos', ok: s => s.resenasHechas >= 3 },
+  { id: 'streak14', nombre: 'Racha de 14', desc: 'Entra 14 días seguidos', xp: 400, cat: 'constancia', ok: s => s.streak >= 14 },
+  { id: 'streak60', nombre: 'Racha de 60', desc: 'Entra 60 días seguidos', xp: 1000, cat: 'constancia', ok: s => s.streak >= 60 },
+  { id: 'reto_10', nombre: 'Retador Avanzado', desc: 'Supera 10 retos distintos', xp: 250, cat: 'especial', ok: s => s.retosHechos >= 10 },
+  { id: 'reto_25', nombre: 'Veterano de Retos', desc: 'Supera 25 retos distintos', xp: 500, cat: 'especial', ok: s => s.retosHechos >= 25 },
+  { id: 'reto_50', nombre: 'Maestro de Retos', desc: 'Supera 50 retos distintos', xp: 900, cat: 'especial', ok: s => s.retosHechos >= 50 },
+  { id: 'perfectos_5', nombre: 'Precisión Clínica', desc: 'Logra 5 retos sin ningún error', xp: 400, cat: 'especial', ok: s => s.retosPerfectos >= 5 },
+  { id: 'news_20', nombre: 'Siempre al Día', desc: 'Lee 20 noticias', xp: 200, cat: 'especial', ok: s => s.newsRead >= 20 },
+  { id: 'embajador_10', nombre: 'Gran Embajador', desc: 'Invita a 10 personas que confirmen su cuenta', xp: 400, cat: 'especial', ok: s => s.invitadosValidos >= 10 }
 ];
 const SECCIONES = ['home', 'library', 'courses-live', 'pdfs', 'news', 'community', 'forum', 'certificates', 'achievements', 'retos', 'atlas', 'eva', 'glossary', 'rehab-calc', 'rom', 'timer', 'account', 'subscription', 'referidos', 'directorio', 'settings', 'notifications', 'discount'];
 const COL_CLASIFICACION = 'retosClasificacion';
