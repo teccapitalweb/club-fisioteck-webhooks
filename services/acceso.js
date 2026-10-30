@@ -297,8 +297,7 @@ function montarRutasAcceso(app, deps) {
       const mSnap = await db.collection('members').doc(d.uid).get();
       if (!mSnap.exists) return res.status(403).json({ error: 'Completa tu registro gratuito para continuar.' });
       const miembro = mSnap.data() || {};
-      const conTrial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null;
-      if (!deps.tieneMembresia(miembro) && !conTrial && !esAdminPorToken(d)) return res.status(402).json({ error: 'Los retos son para miembros y para quien ya eligió su curso de prueba.' });
+      if (!deps.tieneMembresia(miembro) && !esAdminPorToken(d)) return res.status(402).json({ error: 'Los retos son solo para miembros.' });
 
       let supera = false, ok = 0, total = 0, det = null;
       if (tipo === 'quiz' && claves.quiz[retoId]) {

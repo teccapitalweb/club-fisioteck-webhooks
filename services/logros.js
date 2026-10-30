@@ -263,7 +263,7 @@ function montarRutasLogros(app, deps) {
     if (esAdminPorToken(d)) return;
     const m = await db.collection('members').doc(uid).get();
     const miembro = m.exists ? (m.data() || {}) : {};
-    if (!deps.tieneMembresia(miembro) && (miembro.trialCourseId === undefined || miembro.trialCourseId === null)) throw errorHttp(402, 'Los retos son para miembros y para quien ya eligió su curso de prueba.');
+    if (!deps.tieneMembresia(miembro)) throw errorHttp(402, 'Los retos son solo para miembros.');
   }
   app.get('/api/retos/dia', envolver('dia', async (req, res, d) => {
     const hoy = diaMexico(ahora()), lista = retoDelDia(hoy);
