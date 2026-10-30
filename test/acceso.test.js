@@ -132,7 +132,7 @@ const respuestasOk = id => Object.fromEntries(claves.quiz[id].map((c, i) => [i, 
 test('GET /api/acceso muestra los cursos cerrados con los días que faltan', async () => {
   const s = await levantar(base());
   try {
-    const r = await s.llamar('/api/acceso');
+    const r = await s.llamar('/api/acceso?f=1');
     assert.equal(r.cuerpo.escalonado, true);
     assert.equal(r.cuerpo.cursos['2'].abierto, false);
     assert.ok(r.cuerpo.cursos['2'].dias >= 7);
@@ -160,16 +160,16 @@ test('superar 12 retos abre el curso 2 una sola vez y no corre el calendario', a
     for (const [k, cuerpo] of lista.entries()) {
       const r = await s.llamar('/api/retos/completar', cuerpo);
       assert.equal(r.cuerpo.supera, true, cuerpo.retoId); assert.equal(r.cuerpo.nuevo, true);
-      const ac = (await s.llamar('/api/acceso')).cuerpo;
+      const ac = (await s.llamar('/api/acceso?f=1')).cuerpo;
       assert.equal(ac.cursos['2'].abierto, k === lista.length - 1, 'el curso 2 se abre solo con el reto número 12');
     }
-    const ac = (await s.llamar('/api/acceso')).cuerpo;
+    const ac = (await s.llamar('/api/acceso?f=1')).cuerpo;
     assert.equal(ac.adelantos, 1); assert.equal(ac.cursos['2'].porRetos, true);
     assert.equal(ac.cursos['3'].abierto, false, 'solo se adelanta un curso');
     // más retos no abren otro curso
     const extra = Object.keys(claves.quiz)[3];
     await s.llamar('/api/retos/completar', { retoId: extra, tipo: 'quiz', respuestas: respuestasOk(extra) });
-    assert.equal((await s.llamar('/api/acceso')).cuerpo.cursos['3'].abierto, false);
+    assert.equal((await s.llamar('/api/acceso?f=1')).cuerpo.cursos['3'].abierto, false);
     assert.equal((await s.llamar('/api/cursos/2/progreso', { leccion: 0 })).status, 200);
   } finally { s.cerrar(); }
 });
@@ -256,13 +256,13 @@ test('los retos que ya tenía en el sistema anterior se pasan una sola vez y cue
   semilla['members/u1/progress/achievements'] = { retos: { xp: 40, hechos: { [ids[0]]: { fecha: '2026-09-01', mejor: 5, total: 6 }, [ids[1]]: { fecha: '2026-09-02', mejor: 6, total: 6 }, 'q-no-existe': { mejor: 3, total: 3 } } } };
   const s = await levantar(semilla);
   try {
-    const r = (await s.llamar('/api/acceso')).cuerpo;
+    const r = (await s.llamar('/api/acceso?f=1')).cuerpo;
     assert.equal(r.retosSuperados, 2, 'los dos retos válidos cuentan y el que no existe no');
     assert.equal(r.adelanto.porTipo.quiz, 2);
     const guardado = s.db.datos.get('members/u1/progress/retos');
     assert.equal(guardado.heredado, true);
     assert.equal(guardado.superados[ids[0]].xp, 0, 'el XP ya viene en xpHeredado: no se cuenta dos veces');
-    assert.equal((await s.llamar('/api/acceso')).cuerpo.retosSuperados, 2, 'la segunda vez no cambia nada');
+    assert.equal((await s.llamar('/api/acceso?f=1')).cuerpo.retosSuperados, 2, 'la segunda vez no cambia nada');
   } finally { s.cerrar(); }
 });
 
@@ -345,5 +345,17 @@ test('admin: diagnóstico del acceso de un miembro (solo lectura) con el motivo'
     assert.equal(r.status, 200); assert.equal(r.cuerpo.motivo, 'anterior'); assert.equal(r.cuerpo.calendario.activo, true);
     assert.equal(r.cuerpo.miembro.tieneMembresia, true); assert.equal(r.cuerpo.abiertos, r.cuerpo.total);
     assert.equal((await s.llamar('/api/admin/acceso-miembro/nadie', null, 'admin')).status, 404);
+  } finally { s.cerrar(); }
+});
+
+test('/api/acceso reutiliza el cálculo reciente y con ?f=1 vuelve a calcular', async () => {
+  const s = await levantar({ 'members/u1': { status: 'active', startDate: '2026-10-30', activadoEn: '2026-10-30T12:00:00.000Z' }, 'config/club': { escalonadoActivo: true } });
+  try {
+    const a = (await s.llamar('/api/acceso')).cuerpo;
+    s.db.datos.set('members/u1', { status: 'inactive' });
+    const b = (await s.llamar('/api/acceso')).cuerpo;
+    assert.equal(b.membresia, a.membresia, 'sin ?f=1 usa lo calculado hace unos segundos');
+    const c = (await s.llamar('/api/acceso?f=1')).cuerpo;
+    assert.equal(c.membresia, false, 'con ?f=1 recalcula');
   } finally { s.cerrar(); }
 });

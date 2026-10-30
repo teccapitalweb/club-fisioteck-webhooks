@@ -293,12 +293,20 @@ function montarRutasAcceso(app, deps) {
     } catch (e) { console.error('[acceso-miembro]', e.message); res.status(500).json({ error: 'No se pudo revisar el acceso.' }); }
   });
 
+  // La pantalla pregunta por el acceso en cada vista (inicio, cursos, retos) y cada consulta cuesta varias lecturas de Firestore:
+  // sin ?f=1 se responde con lo que se calculó hace menos de 30 segundos (?f=1 siempre calcula de nuevo: después de un reto o una clase)
+  const cacheAcceso = new Map();
   app.get('/api/acceso', async (req, res) => {
     try {
       const d = await sesion(req, res); if (!d) return;
-      const { miembro, acceso } = await evaluar(d.uid, d);
       res.set('Cache-Control', 'no-store');
-      res.json({ membresia: deps.tieneMembresia(miembro), ...acceso });
+      const previo = cacheAcceso.get(d.uid);
+      if (!req.query.f && previo && Date.now() - previo.t < 30000) return res.json(previo.v);
+      const { miembro, acceso } = await evaluar(d.uid, d);
+      const v = { membresia: deps.tieneMembresia(miembro), ...acceso };
+      cacheAcceso.set(d.uid, { t: Date.now(), v });
+      if (cacheAcceso.size > 2000) cacheAcceso.delete(cacheAcceso.keys().next().value);
+      res.json(v);
     } catch (e) { console.error('[acceso]', e.message); res.status(500).json({ error: 'No se pudo consultar tu acceso.' }); }
   });
 

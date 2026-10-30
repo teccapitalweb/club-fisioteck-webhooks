@@ -157,9 +157,9 @@ test('con 4 invitados válidos se gana el premio y abre un curso cerrado una sol
     const est = await s.llamar('/api/referidos/estado');
     assert.equal(est.cuerpo.validos, 4);
     assert.equal(est.cuerpo.premio.ganado, true);
-    assert.equal((await s.llamar('/api/acceso')).cuerpo.cursos['2'].abierto, false);
+    assert.equal((await s.llamar('/api/acceso?f=1')).cuerpo.cursos['2'].abierto, false);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 2 })).status, 200);
-    assert.equal((await s.llamar('/api/acceso')).cuerpo.cursos['2'].abierto, true);
+    assert.equal((await s.llamar('/api/acceso?f=1')).cuerpo.cursos['2'].abierto, true);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 2 })).status, 409); // ya abierto
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 3 })).status, 403); // el premio ya se usó
   } finally { s.cerrar(); }
