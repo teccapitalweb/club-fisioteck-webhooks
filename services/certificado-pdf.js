@@ -123,12 +123,12 @@ async function generarPdf(cert, urlVerificacion) {
     if (inst) doc.font('Helvetica').fontSize(8.5).fillColor(GRIS).text(inst, x, top + 116, { width: 256, align: 'center', lineBreak: false });
   };
   firma(xF1, FIRMA_DIRECTORA, 'Lic. Paulina Torres Montalvo', 'Directora Académica', 'Club FisioTeck');
-  firma(xF2, FIRMA_COORDINACION, 'Coordinación de Certificación', 'IPCI Latinoamericano', '');
+  firma(xF2, FIRMA_COORDINACION, 'Coordinación de Certificación', 'IPCIL Latinoamericano', '');
   dibujarSello(doc, xSello + 7, base - 112);
 
   // Barra inferior con el folio
   doc.lineWidth(1).strokeColor(LINEA).moveTo(48, 668).lineTo(ANCHO - 48, 668).stroke();
-  const piezas = [{ t: 'Folio: ', f: 'Helvetica' }, { t: seguro(cert.folio), f: 'Helvetica-Bold' }, { t: '  ·  club.fisioteck.com  ·  Certificado emitido digitalmente por Club FisioTeck / IPCI Latinoamericano', f: 'Helvetica' }];
+  const piezas = [{ t: 'Folio: ', f: 'Helvetica' }, { t: seguro(cert.folio), f: 'Helvetica-Bold' }, { t: '  ·  club.fisioteck.com  ·  Certificado emitido digitalmente por Club FisioTeck / IPCIL Latinoamericano', f: 'Helvetica' }];
   doc.fontSize(9);
   const total = piezas.reduce((s, p) => s + doc.font(p.f).widthOfString(p.t), 0);
   let x = (ANCHO - total) / 2;
