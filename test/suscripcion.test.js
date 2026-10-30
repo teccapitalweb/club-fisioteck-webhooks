@@ -116,3 +116,30 @@ test('clases en vivo: el enlace y la grabación solo llegan a miembros; el panel
     assert.equal((await s.llamar('/api/webinars/17/enlace?tipo=vivo', null, 'socio')).status, 404);
   } finally { s.cerrar(); }
 });
+
+test('revisión periódica: aplica lo que haría customer.subscription.updated preguntándole a Stripe', async () => {
+  const seg2 = f => Math.floor(new Date(f + 'T12:00:00Z').getTime() / 1000);
+  const subs = {
+    sub_a: { id: 'sub_a', status: 'active', cancel_at_period_end: true, current_period_end: seg2('2026-12-01') }, // canceló en el portal
+    sub_b: { id: 'sub_b', status: 'past_due' },
+    sub_c: { id: 'sub_c', status: 'active', cancel_at_period_end: false, current_period_end: seg2('2026-12-01') } // sin cambios reales
+  };
+  const stripe = { subscriptions: { retrieve: async id => { if (id === 'sub_x') { const e = new Error('no'); e.code = 'resource_missing'; throw e; } return subs[id]; } } };
+  const db = new FakeFirestore({
+    'members/a': { email: 'a@m.com', status: 'active', stripeSubscriptionId: 'sub_a', nextPaymentDate: '2026-12-01' },
+    'members/b': { email: 'b@m.com', status: 'active', stripeSubscriptionId: 'sub_b', nextPaymentDate: '2026-11-01' },
+    'members/c': { email: 'c@m.com', status: 'active', stripeSubscriptionId: 'sub_c', nextPaymentDate: '2026-12-01', accessUntil: '', cancelledAt: '', stripeCancelled: false, pagoPendiente: false, paymentFailedAt: '' },
+    'members/x': { email: 'x@m.com', status: 'cancelled', accessUntil: '2026-11-05', stripeSubscriptionId: 'sub_x' },
+    'members/z': { email: 'z@m.com', status: 'registered' } // sin suscripción: ni se revisa
+  });
+  const r = await sus.sincronizarSuscripciones(db, stripe, { ahora: () => new Date('2026-10-30T12:00:00Z') });
+  assert.deepEqual([r.revisados, r.cambiados, r.errores], [4, 3, 0]);
+  const leer2 = async id => (await db.collection('members').doc(id).get()).data();
+  const a = await leer2('a'); assert.equal(a.status, 'cancelled'); assert.equal(a.accessUntil, '2026-12-01');
+  const b = await leer2('b'); assert.equal(b.status, 'active'); assert.equal(b.pagoPendiente, true);
+  const c = await leer2('c'); assert.equal(c.updatedAt, undefined, 'sin cambios no se escribe');
+  const x = await leer2('x'); assert.equal(x.suscripcionTerminada, true); assert.equal(x.accessUntil, '2026-11-05', 'cancelada conserva su fecha');
+  // segunda pasada: ya no escribe nada (x quedó terminada y los demás sin diferencias)
+  const r2 = await sus.sincronizarSuscripciones(db, stripe, { ahora: () => new Date('2026-10-30T13:00:00Z') });
+  assert.equal(r2.cambiados, 0);
+});

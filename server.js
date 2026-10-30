@@ -1327,4 +1327,10 @@ app.listen(PORT, () => {
   // Limpieza diaria: se borran los identificadores anónimos de visitantes de días viejos (solo sirven para contar únicos del propio día)
   const limpiarVisitas = () => require('./services/visitas').limpiarVisitantesAntiguos(db).then(n => { if (n) console.log('🧹 Visitantes antiguos borrados:', n); }).catch(e => console.warn('Limpieza de visitas:', e && e.message));
   setTimeout(limpiarVisitas, 5 * 60 * 1000).unref(); setInterval(limpiarVisitas, 24 * 3600 * 1000).unref();
+  // Suscripciones al día SIN el aviso customer.subscription.updated (no hay acceso al panel de Stripe para
+  // agregarlo al webhook): cada 6 horas se le pregunta a Stripe y se aplican los mismos cambios.
+  const sincronizarSuscripciones = () => suscripcion.sincronizarSuscripciones(db, stripe)
+    .then(r => { if (r.cambiados || r.errores) console.log('🔄 Suscripciones: ' + r.revisados + ' revisadas, ' + r.cambiados + ' actualizadas' + (r.errores ? ', ' + r.errores + ' con error' : '')); })
+    .catch(e => console.warn('Suscripciones:', e && e.message));
+  setTimeout(sincronizarSuscripciones, 2 * 60 * 1000).unref(); setInterval(sincronizarSuscripciones, 6 * 3600 * 1000).unref();
 });

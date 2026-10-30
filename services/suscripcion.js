@@ -89,4 +89,33 @@ async function suscripcionViva(stripe, m) {
   return !m.suscripcionTerminada && (['active', 'paid', 'cancelled'].includes(m.status) || !!m.pagoPendiente);
 }
 
-module.exports = { bloqueoDeCobro, cambiosPorSuscripcion, cambiosPorCobroFallido, cancelarEnStripe, suscripcionViva, finDePeriodo, DIAS_GRACIA };
+// REVISIÓN PERIÓDICA DE SUSCRIPCIONES: sustituye al aviso customer.subscription.updated cuando no se puede
+// agregar al webhook (sin acceso al panel de Stripe). El servidor le pregunta a Stripe por cada suscripción
+// guardada y aplica los mismos cambios que aplicaría el aviso: cancelar o reactivar desde el portal de Stripe,
+// pago pendiente (past_due) y suscripción terminada (unpaid/canceled). Solo escribe cuando algo cambió.
+async function sincronizarSuscripciones(db, stripe, { limite = 400, ahora = () => new Date() } = {}) {
+  const r = { revisados: 0, cambiados: 0, errores: 0 };
+  if (!db || !stripe) return r;
+  const sn = await db.collection('members').limit(limite).get();
+  for (const doc of sn.docs) {
+    const m = { uid: doc.id, ...(doc.data() || {}) };
+    if (!m.stripeSubscriptionId || m.suscripcionTerminada) continue;
+    r.revisados++;
+    let sub;
+    try { sub = await stripe.subscriptions.retrieve(m.stripeSubscriptionId); }
+    catch (e) {
+      if (e && e.code === 'resource_missing') sub = { id: m.stripeSubscriptionId, status: 'canceled' }; // ya no existe en Stripe
+      else { r.errores++; continue; }
+    }
+    const cambios = cambiosPorSuscripcion(sub, m);
+    if (!cambios) continue;
+    const distinto = Object.keys(cambios).some(k => String(m[k] === undefined || m[k] === null ? '' : m[k]) !== String(cambios[k] === undefined || cambios[k] === null ? '' : cambios[k]));
+    if (!distinto) continue;
+    await db.collection('members').doc(m.uid).update({ ...cambios, updatedAt: ahora().toISOString() });
+    console.log('[suscripciones] ' + (m.email || m.uid) + ' → ' + (cambios.status || 'sin cambio de estado') + (cambios.pagoPendiente ? ' · pago pendiente' : '') + (cambios.suscripcionTerminada ? ' · terminada' : ''));
+    r.cambiados++;
+  }
+  return r;
+}
+
+module.exports = { bloqueoDeCobro, cambiosPorSuscripcion, cambiosPorCobroFallido, cancelarEnStripe, suscripcionViva, finDePeriodo, sincronizarSuscripciones, DIAS_GRACIA };
