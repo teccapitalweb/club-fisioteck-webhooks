@@ -29,3 +29,12 @@ test('el Club: cada script local que carga index.html y admin/index.html existe'
   });
   assert.deepEqual(faltan, []);
 });
+
+test('el Club: los scripts escritos dentro de index.html y admin/index.html tienen sintaxis válida', { skip: !hay && 'no está la carpeta club-fisioteck' }, () => {
+  const malos = [];
+  ['index.html', 'admin/index.html'].forEach(html => {
+    const t = fs.readFileSync(path.join(club, html), 'utf8');
+    for (const m of t.matchAll(/<script(?![^>]*\bsrc\b)[^>]*>([\s\S]*?)<\/script>/g)) { try { new vm.Script(m[1], { filename: html }); } catch (e) { malos.push(html + ': ' + e.message); } }
+  });
+  assert.deepEqual(malos, []);
+});
