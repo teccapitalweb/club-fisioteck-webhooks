@@ -57,7 +57,7 @@ async function levantar(semilla) {
     const tipo = r.headers.get('content-type') || '';
     return { status: r.status, cuerpo: tipo.includes('json') ? await r.json() : await r.text() };
   };
-  return { llamar, db, deps, cerrar: () => srv.close() };
+  return { llamar, db, deps, url: base, cerrar: () => srv.close() };
 }
 
 const progresoCompleto = { 'members/u1/progress/courses': { c_11: { completed: [0, 1] } } };
@@ -220,5 +220,17 @@ test('admin: emite todos los pendientes con el nombre de cada miembro y deja fue
     const c = [...s.db.datos.entries()].filter(([k]) => k.startsWith('certificados/')).map(([, v]) => v);
     assert.equal(c.length, 1); assert.equal(c[0].nombre, 'Ana Torres'); assert.equal(c[0].emitidoEn, '2026-08-15T18:00:00.000Z');
     assert.equal((await s.llamar('/api/admin/certificados/emitir-pendientes', { metodo: 'POST', token: 'admin' })).cuerpo.emitidos, 0, 'no duplica');
+  } finally { s.cerrar(); }
+});
+
+test('el QR del certificado se sirve como imagen y no para uno revocado o inexistente', async () => {
+  const s = await levantar({ 'members/u1': { name: 'ana torres', email: 'ana@mail.com' }, 'members/u1/progress/courses': { c_11: { completed: [0, 1], updatedAt: '2026-08-15T18:00:00.000Z' } } });
+  try {
+    await s.llamar('/api/certificados/emitir-pendientes', { metodo: 'POST', token: 'socio', cuerpo: { nombre: 'ana maría torres' } });
+    const folio = (await s.llamar('/api/certificados/mios', { token: 'socio' })).cuerpo.certificados[0].folio;
+    const r = await fetch(s.url + '/api/certificados/' + folio + '/qr.png');
+    assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/png');
+    const b = Buffer.from(await r.arrayBuffer()); assert.equal(b.slice(1, 4).toString(), 'PNG');
+    assert.equal((await fetch(s.url + '/api/certificados/FT-NOEXISTE/qr.png')).status, 404);
   } finally { s.cerrar(); }
 });

@@ -256,6 +256,18 @@ function montarRutasCertificados(app, deps) {
     } catch (e) { console.error('[certificados] pdf', e.message); res.status(500).json({ error: 'No se pudo generar el PDF.' }); }
   });
 
+  // QR de verificación del certificado (el mismo del PDF): lo usa la vista del certificado en el Club
+  app.get('/api/certificados/:folio/qr.png', async (req, res) => {
+    try {
+      if (!llave()) return sinLlave(res);
+      const snap = await col().doc(normalizarFolio(req.params.folio)).get();
+      if (!snap.exists || snap.data().revocado || !firmaValida(snap.data(), llave())) return res.status(404).json({ error: 'Certificado no disponible.' });
+      const png = await require('qrcode').toBuffer(URL_VERIFICAR + '?folio=' + encodeURIComponent(snap.data().folio), { margin: 0, width: 288, errorCorrectionLevel: 'M', color: { dark: '#0A3E68', light: '#FFFFFF' } });
+      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+      res.send(png);
+    } catch (e) { console.error('[certificados] qr', e.message); res.status(500).json({ error: 'No se pudo generar el QR.' }); }
+  });
+
   // ----- Administrador -----
   app.get('/api/admin/yo', conAdmin(async (req, res, d) => { res.json({ admin: true, email: d.email }); }));
 
