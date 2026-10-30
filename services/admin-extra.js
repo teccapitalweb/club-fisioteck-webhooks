@@ -164,6 +164,14 @@ function montarRutasAdminExtra(app, deps) {
       agrega('visitas', 'Contador de visitas', 'ok', c.contadorVisitas === true ? 'Encendido: suma visitas por día y página.' : 'Apagado (puedes encenderlo en Encuesta y visitas).');
     } catch (e) { agrega('bd', 'Base de datos y precios', 'error', 'No se pudo leer Firestore: ' + String(e && e.message).slice(0, 80)); }
     agrega('stripe', 'Stripe · cobros', env.STRIPE_SECRET_KEY ? 'ok' : 'error', env.STRIPE_SECRET_KEY ? 'Llave configurada.' : 'Falta STRIPE_SECRET_KEY: no se pueden crear cobros.');
+    // Portal de clientes de Stripe (cambiar tarjeta, ver facturas, cancelar): solo lectura, no crea ni cambia nada
+    if (env.STRIPE_SECRET_KEY && deps.stripe && deps.stripe.billingPortal && deps.stripe.billingPortal.configurations) {
+      try {
+        const l = await deps.stripe.billingPortal.configurations.list({ is_default: true, limit: 1 });
+        const hay = !!(l && Array.isArray(l.data) && l.data.length);
+        agrega('stripe-portal', 'Stripe · portal de clientes', hay ? 'ok' : 'aviso', hay ? 'Activo: los miembros pueden cambiar su tarjeta, ver sus facturas y cancelar desde el Club.' : 'No hay un portal configurado: el botón de administrar suscripción mostraría un error. En Stripe: Configuración, Facturación, Portal de clientes, Activar (lo hace el dueño de la cuenta).');
+      } catch (e) { agrega('stripe-portal', 'Stripe · portal de clientes', 'aviso', 'No se pudo revisar (la llave de Stripe quizá no tiene permiso para leer el portal): ' + String(e && e.message).slice(0, 80)); }
+    }
     agrega('stripe-avisos', 'Stripe · avisos de pago', env.STRIPE_WEBHOOK_SECRET ? 'ok' : 'aviso', env.STRIPE_WEBHOOK_SECRET ? 'Firma de avisos configurada.' : 'Falta STRIPE_WEBHOOK_SECRET: los pagos no activarían membresías.');
     if (!biblioteca() || !llaveApi() || !env.BUNNY_STREAM_TOKEN_KEY) {
       agrega('bunny', 'Videos de los cursos (Bunny)', 'aviso', 'Faltan variables: ' + [!biblioteca() && 'BUNNY_STREAM_LIBRARY_ID', !llaveApi() && 'BUNNY_STREAM_API_KEY', !env.BUNNY_STREAM_TOKEN_KEY && 'BUNNY_STREAM_TOKEN_KEY'].filter(Boolean).join(', ') + '.');

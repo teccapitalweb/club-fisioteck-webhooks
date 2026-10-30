@@ -9,12 +9,12 @@ function fakeDb() {
   const datos = new Map();
   return { datos, collection: n => ({ doc: id => ({ async get() { const v = datos.get(n + '/' + id); return { exists: v !== undefined, data: () => v }; }, async set(v) { datos.set(n + '/' + id, JSON.parse(JSON.stringify(v))); } }) }) };
 }
-async function levantar({ env = {}, fetchFalso, cargarCatalogo } = {}) {
+async function levantar({ env = {}, fetchFalso, cargarCatalogo, stripe } = {}) {
   const db = fakeDb();
   const admin = { auth: () => ({ verifyIdToken: async t => { if (t === 'admin') return { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true }; if (t === 'socio') return { uid: 's1', email: 's@mail.com', email_verified: true }; throw new Error('x'); } }) };
   const registrados = [];
   const app = express(); app.use(express.json());
-  montarRutasAdminExtra(app, { db, admin, env, fetch: fetchFalso, cargarCatalogo, registrarCatalogoExtra: c => registrados.push(c) });
+  montarRutasAdminExtra(app, { db, admin, env, stripe, fetch: fetchFalso, cargarCatalogo, registrarCatalogoExtra: c => registrados.push(c) });
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const url = 'http://127.0.0.1:' + srv.address().port;
   const llamar = async (ruta, cuerpo, token = 'admin') => {
@@ -145,4 +145,13 @@ test('reproducción: el video no existe en la biblioteca configurada -> error qu
   const fetchFalso = async url => /\/videos\//.test(url) ? resp(false, 404, {}) : resp(true, 200, { items: [] });
   const x = await reproduccion(fetchFalso);
   assert.equal(x.estado, 'error'); assert.match(x.detalle, /biblioteca 111/); assert.match(x.detalle, /999/); assert.match(x.detalle, /BUNNY_STREAM_LIBRARY_ID/);
+});
+
+test('estado: revisa si el portal de clientes de Stripe está activo (solo lectura)', async () => {
+  const con = (list) => ({ billingPortal: { configurations: { list } } });
+  const probar = async stripe => { const s = await levantar({ env: { STRIPE_SECRET_KEY: 'sk_test' }, stripe }); try { return (await s.llamar('/api/admin/estado')).cuerpo.servicios.find(x => x.id === 'stripe-portal'); } finally { s.cerrar(); } };
+  assert.equal((await probar(con(async () => ({ data: [{ id: 'bpc_1' }] })))).estado, 'ok');
+  const falta = await probar(con(async () => ({ data: [] }))); assert.equal(falta.estado, 'aviso'); assert.match(falta.detalle, /Portal de clientes/);
+  assert.equal((await probar(con(async () => { throw new Error('sin permiso'); }))).estado, 'aviso');
+  assert.equal(await probar(undefined), undefined, 'sin Stripe no se muestra');
 });

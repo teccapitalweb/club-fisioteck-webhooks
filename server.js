@@ -1272,7 +1272,7 @@ const recordatorios = require('./services/recordatorios').crearRecordatorios({ d
 recordatorios.montarRutas(app);
 // Historial del servidor y acciones de miembros con bitácora de quién hizo qué (services/rutas-servidor.js)
 require('./services/rutas-servidor').montarRutasServidor(app, { db, admin, stripe, bitacora: bitacoraServidor });
-require('./services/admin-extra').montarRutasAdminExtra(app, { db, admin, registrarCatalogoExtra, cargarCatalogo: loadBunnyCatalog }); // Bunny, catálogo de cursos nuevos y estado de servicios
+require('./services/admin-extra').montarRutasAdminExtra(app, { db, admin, stripe, registrarCatalogoExtra, cargarCatalogo: loadBunnyCatalog }); // Bunny, catálogo de cursos nuevos y estado de servicios
 require('./services/acceso').montarRutasAcceso(app, depsAcceso); // /api/acceso, /api/retos (escalonado y retos calificados)
 require('./services/resenas').montarRutasResenas(app, depsAcceso); // reseñas de cursos (solo quien tiene el certificado)
 require('./services/rutas-referidos').montarRutasReferidos(app, depsAcceso); // referidos y premio por invitar
