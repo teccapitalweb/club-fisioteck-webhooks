@@ -1141,67 +1141,17 @@ app.post('/api/reactivate-subscription', requireFirebaseUser, limitarPago, async
 
 // ===== API: Fetch news from NewsData.io (with 6h cache) =====
 const NEWSDATA_API_KEY = process.env.NEWSDATA_API_KEY || ''; // antes estaba escrita en el código: rota esa clave en newsdata.io y ponla como variable de entorno
-let newsCache = { articles: [], lastFetch: 0 };
-const NEWS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
-app.get('/api/news', async (req, res) => {
-  try {
-    // Return cache if still valid
-    if (newsCache.articles.length > 0 && (Date.now() - newsCache.lastFetch) < NEWS_CACHE_TTL) {
-      console.log('Serving cached news');
-      return res.json({ articles: newsCache.articles });
-    }
-
-    const url = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=fisioterapia OR rehabilitacion OR ortopedia&language=es&category=health&size=10`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('NewsData error: ' + response.status);
-    const data = await response.json();
-
-    let results = data.results || [];
-
-    if (results.length === 0) {
-      // Fallback: broader health search
-      const url2 = `https://newsdata.io/api/1/news?apikey=${NEWSDATA_API_KEY}&q=medicina deportiva OR terapia fisica&language=es&category=health&size=10`;
-      const res2 = await fetch(url2);
-      if (res2.ok) {
-        const data2 = await res2.json();
-        results = data2.results || [];
-      }
-    }
-
-    const articles = results.map(a => ({
-      title: a.title || '',
-      description: a.description || '',
-      content: a.content || '',
-      url: a.link || '',
-      image: a.image_url || null,
-      publishedAt: a.pubDate || '',
-      source: { name: a.source_name || 'Noticias' }
-    }));
-
-    // Remove duplicates by title
-    const seen = new Set();
-    const uniqueArticles = articles.filter(a => {
-      const key = a.title.toLowerCase().trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    // Update cache
-    newsCache = { articles: uniqueArticles, lastFetch: Date.now() };
-    console.log(`News fetched and cached: ${uniqueArticles.length} articles`);
-
-    res.json({ articles: uniqueArticles });
-  } catch(err) {
-    console.error('News fetch error:', err.message);
-    // Return stale cache if available
-    if (newsCache.articles.length > 0) {
-      return res.json({ articles: newsCache.articles });
-    }
-    res.status(500).json({ error: 'Error fetching news' });
-  }
-});
+// Noticias guardadas en Firestore con tarea diaria y aviso en la campana (services/noticias.js, como Alintec y Zoorigen).
+// La ruta /api/news vive ahí; este bloque viejo (NewsData directo con caché en memoria) se reemplazó.
+const noticiasSvc = require('./services/noticias').crearNoticias({ db, admin });
+noticiasSvc.montarRutas(app);
+// Tarea de noticias: al arrancar (1 min después) y luego cada 12 horas; solo si hay NEWSDATA_API_KEY
+if (NEWSDATA_API_KEY) {
+  const sincronizarNoticias = () => noticiasSvc.sincronizar().then(r => { if (r.ok && r.nuevas) console.log('📰 Noticias nuevas guardadas:', r.nuevas); else if (!r.ok) console.warn('📰 Noticias:', r.motivo); }).catch(e => console.warn('📰 Noticias:', e && e.message));
+  setTimeout(sincronizarNoticias, 60 * 1000);
+  setInterval(sincronizarNoticias, 12 * 60 * 60 * 1000);
+}
 
 // ===== API: Expirar miembros vencidos (barrida masiva) =====
 // Marca 'inactive' a todos los miembros cuyo periodo pagado ya venció.

@@ -173,6 +173,8 @@ function montarRutasLogros(app, deps) {
     const desbloqueadas = { ...(doc.desbloqueadas || {}) };
     const nuevas = [];
     BADGES.forEach(b => { if (!desbloqueadas[b.id] && b.ok(stats)) { desbloqueadas[b.id] = ahora().toISOString(); nuevas.push(b.id); } });
+    // Campana: un aviso por cada insignia nueva (como Zoorigen); nunca interrumpe el cálculo
+    if (nuevas.length) { const { crearAviso } = require('./avisos'); nuevas.forEach(id => { const b = BADGES.find(x => x.id === id); if (b) crearAviso(db, uid, 'insignia_' + id, { tipo: 'logro', titulo: '¡Nueva insignia! ' + b.nombre, texto: b.desc + ' · +' + b.xp + ' XP', pagina: 'achievements' }); }); }
     const xpInsignias = BADGES.reduce((t, b) => t + (desbloqueadas[b.id] ? b.xp : 0), 0);
     const xpRetos = Object.entries(superados).reduce((t, [id, r]) => t + xpDeReto(id, r), 0) + Math.min(Number(retos && retos.xpExtra) || 0, TOPE_XP_PRACTICA) + (Number(doc.xpHeredado) || 0) + (doc.bienvenida ? XP_BIENVENIDA : 0);
     const xp = xpInsignias + xpRetos;

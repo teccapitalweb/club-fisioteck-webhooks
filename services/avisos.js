@@ -69,4 +69,16 @@ function montarRutasAvisos(app, deps) {
   }));
 }
 
-module.exports = { montarRutasAvisos };
+// Aviso personal creado por el PROPIO servidor (certificado emitido, insignia nueva, premio ganado...), como Zoorigen.
+// Un aviso por id: si ya existe no se repite. Nunca lanza (un aviso jamas debe tirar la operacion que lo origina).
+async function crearAviso(db, uid, id, datos) {
+  try {
+    if (!db || !uid || !/^[A-Za-z0-9_.:-]{1,128}$/.test(String(id))) return false;
+    const ref = db.collection('members').doc(String(uid)).collection('avisos').doc(String(id));
+    if ((await ref.get()).exists) return false;
+    await ref.set({ tipo: limpiarTexto(datos.tipo, 20) || 'sistema', titulo: limpiarTexto(datos.titulo, 120), fragmento: limpiarTexto(datos.texto, 140), pagina: limpiarTexto(datos.pagina, 30), ms: Date.now(), leido: false });
+    return true;
+  } catch (e) { console.warn('[avisos crear]', e && e.message); return false; }
+}
+
+module.exports = { montarRutasAvisos, crearAviso };

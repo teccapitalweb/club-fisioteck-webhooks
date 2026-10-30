@@ -92,6 +92,8 @@ function construirCertificado({ uid, curso, nombre, email, origen, emitidoPor, a
 // deps: { db, admin (firebase-admin), cargarCatalogo(), generarPdf?(cert) }
 function montarRutasCertificados(app, deps) {
   const { db, admin } = deps;
+  const { crearAviso } = require('./avisos');
+  const avisoCertificado = cert => crearAviso(db, cert.uid, 'cert_' + cert.folio, { tipo: 'certificado', titulo: '¡Certificado emitido!', texto: cert.cursoTitulo + ' · folio ' + cert.folio, pagina: 'certificates' });
   const col = () => db.collection('certificados');
 
   async function sesion(req, res) {
@@ -135,6 +137,7 @@ function montarRutasCertificados(app, deps) {
     if (!v.ok) return { requiereNombre: true, confirmarNombre: false };
     const cert = construirCertificado({ uid, curso, nombre: v.nombre, email, origen: 'club' }, llave());
     await col().doc(cert.folio).set(cert);
+    avisoCertificado(cert);
     if (deps.enviarCorreoCertificado && !sinCorreo) Promise.resolve().then(() => deps.enviarCorreoCertificado(cert)).catch(e => console.warn('[certificados] correo:', e && e.message));
     return { certificado: certificadoPublico(cert), nuevo: true, confirmarNombre };
   }
@@ -192,6 +195,7 @@ function montarRutasCertificados(app, deps) {
     if (!v.ok) return res.status(400).json({ error: v.error });
     const cert = construirCertificado({ uid: d.uid, curso, nombre: v.nombre, email: d.email, origen: 'club' }, llave());
     await col().doc(cert.folio).set(cert);
+    avisoCertificado(cert);
     // El nombre confirmado en la tarjeta del certificado también queda como nombre del perfil (socio y cuenta de acceso)
     try {
       await db.collection('members').doc(d.uid).set({ name: cert.nombre, nombreCertificadoConfirmadoEn: new Date().toISOString() }, { merge: true });
@@ -254,6 +258,7 @@ function montarRutasCertificados(app, deps) {
     if (!v.ok) return res.status(400).json({ error: v.error });
     const cert = construirCertificado({ uid: socio.uid, curso, nombre: v.nombre, email: socio.email, origen: 'manual', emitidoPor: d.email }, llave());
     await col().doc(cert.folio).set(cert);
+    avisoCertificado(cert);
     res.status(201).json({ certificado: certificadoPublico(cert) });
   }));
 

@@ -150,6 +150,9 @@ function montarRutasReferidos(app, deps) {
     if (faltan.length) {
       g.ganados = [...g.ganados, ...faltan];
       await refPremios(uid).set({ ganados: g.ganados, usados: g.usados, actualizadoMs: Date.now() }, { merge: true });
+      // Campana: un aviso por cada premio nuevo (como Zoorigen)
+      const { crearAviso } = require('./avisos');
+      faltan.forEach(clave => { const p = R.PREMIOS[clave] || {}; crearAviso(db, uid, 'premio_' + clave, { tipo: 'premio', titulo: '¡Ganaste un premio!', texto: (p.titulo || 'Premio') + ': abre un curso antes de su fecha.', pagina: 'achievements' }); });
     }
     return g;
   }
