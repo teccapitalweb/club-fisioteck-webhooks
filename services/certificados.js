@@ -262,6 +262,28 @@ function montarRutasCertificados(app, deps) {
     res.status(201).json({ certificado: certificadoPublico(cert) });
   }));
 
+  // Emite de una vez los certificados de los cursos que los miembros ya habían terminado ANTES de que existieran los certificados automáticos
+  // (antes el PDF se armaba en el navegador y no quedaba registro). No manda correos. Solo toma los cursos 100 % completados en su avance.
+  app.post('/api/admin/certificados/retroactivos', conAdmin(async (req, res) => {
+    if (!llave()) return sinLlave(res);
+    const catalogo = deps.cargarCatalogo(), miembros = await db.collection('members').get();
+    const r = { miembros: 0, conCursosTerminados: 0, emitidos: 0, yaExistian: 0, sinNombreValido: 0, revisados: [] };
+    for (const m of miembros.docs) {
+      r.miembros++;
+      const ficha = m.data() || {}, prog = await leerProgreso(m.id);
+      const terminados = (catalogo.courses || []).filter(c => { const n = (c.lessons || []).length; return n > 0 && clasesCompletadas(prog, c.courseId, n) >= n; });
+      if (!terminados.length) continue;
+      r.conCursosTerminados++;
+      for (const curso of terminados) {
+        try {
+          const x = await emitirAuto({ uid: m.id, email: ficha.email || '', curso, nombreCandidato: ficha.name, sinCorreo: true });
+          if (x.nuevo === true) r.emitidos++; else if (x.certificado) r.yaExistian++; else if (x.requiereNombre) r.sinNombreValido++;
+        } catch (e) { console.warn('[certificados] retroactivo', m.id, e && e.message); }
+      }
+    }
+    delete r.revisados;
+    res.json({ ok: true, ...r });
+  }));
   app.post('/api/admin/certificados/:folio/revocar', conAdmin(async (req, res, d) => {
     const ref = col().doc(normalizarFolio(req.params.folio));
     const s = await ref.get();

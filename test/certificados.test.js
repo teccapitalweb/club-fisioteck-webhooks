@@ -170,3 +170,18 @@ test('certificado automático: si el nombre del perfil no sirve (una sola palabr
     assert.equal(r.requiereNombre, true); assert.equal(r.certificado, undefined);
   } finally { s.cerrar(); }
 });
+
+test('el administrador emite de una vez los certificados de cursos ya terminados antes (sin correos); solo el administrador', async () => {
+  const s = await levantar({
+    'members/u1': { name: 'Ana Torres', email: 'ana@mail.com' }, 'members/u1/progress/courses': { c_11: { completed: [0, 1] } },
+    'members/u2': { name: 'Beto', email: 'beto@mail.com' }, 'members/u2/progress/courses': { c_11: { completed: [0, 1] } },
+    'members/u3': { name: 'Carla Paz', email: 'carla@mail.com' }, 'members/u3/progress/courses': { c_11: { completed: [0] } }
+  });
+  try {
+    assert.equal((await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'socio' })).status, 403);
+    const r = (await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'admin' })).cuerpo;
+    assert.equal(r.miembros, 3); assert.equal(r.conCursosTerminados, 2); assert.equal(r.emitidos, 1); assert.equal(r.sinNombreValido, 1);
+    const otra = (await s.llamar('/api/admin/certificados/retroactivos', { metodo: 'POST', token: 'admin' })).cuerpo;
+    assert.equal(otra.emitidos, 0); assert.equal(otra.yaExistian, 1, 'no se repite');
+  } finally { s.cerrar(); }
+});
