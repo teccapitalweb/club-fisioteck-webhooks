@@ -42,13 +42,14 @@ function crearRecordatorios({ db, admin, stripe, tieneMembresia, cargarCatalogo,
       const c = await servicio.cuponParaCheckout(uid, m);
       if (!c) return null;
       sessionConfig.discounts = [{ promotion_code: c.promoId }];
+      delete sessionConfig.allow_promotion_codes; // Stripe no permite discounts junto con el campo «Agregar código»
       sessionConfig.metadata = { ...sessionConfig.metadata, recordatorioPromoId: c.promoId, recordatorioCodigo: c.codigo, recordatorioPaso: String(c.paso) };
       return c;
     } catch (e) { console.warn('[Recordatorios] No se pudo revisar el cupón; se cobra sin él:', e && e.message); return null; }
   }
   // Si Stripe rechaza el cupón (venció justo ahora), se vuelve a armar la sesión sin él
   function sinCupon(sessionConfig) {
-    const normal = { ...sessionConfig, metadata: { ...sessionConfig.metadata } };
+    const normal = { ...sessionConfig, allow_promotion_codes: true, metadata: { ...sessionConfig.metadata } };
     delete normal.discounts; delete normal.metadata.recordatorioPromoId; delete normal.metadata.recordatorioCodigo; delete normal.metadata.recordatorioPaso;
     return normal;
   }

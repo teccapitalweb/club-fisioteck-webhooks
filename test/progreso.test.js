@@ -61,11 +61,12 @@ test('con membresía guarda en orden y rechaza saltarse clases', async () => {
   } finally { s.cerrar(); }
 });
 
-test('sin membresía ni prueba no hay vista previa: ninguna clase se abre, ni la primera', async () => {
+test('sin membresía: la clase de vista previa del catálogo sí se abre (como Alintec); las demás no', async () => {
   const s = await levantar({ 'members/u1': { status: 'registered' } });
   try {
-    assert.equal((await marcar(s, 0)).status, 402);
+    assert.equal((await marcar(s, 0)).status, 200, 'la clase isPreview se puede ver y marcar sin membresía');
     assert.equal((await marcar(s, 1)).status, 402);
+    assert.equal((await marcar(s, 2)).status, 402);
   } finally { s.cerrar(); }
 });
 

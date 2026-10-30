@@ -112,7 +112,7 @@ function montarRutasMateriales(app, deps) {
     res.json({
       nivel,
       materiales: lista.map((m, i) => {
-        const abierto = (nivel === 'admin') || (nivel === 'miembro' && desbloqueado(m, hechas)) || (nivel === 'prueba' && i < lista.length - 1);
+        const abierto = (nivel === 'admin') || (nivel === 'miembro' && desbloqueado(m, hechas)) || (nivel === 'prueba' && i < lista.length - 1 && desbloqueado(m, hechas));
         return { indice: i, titulo: m.titulo, desbloqueaEnClase: m.desbloqueaEnClase || 0, estado: abierto ? 'abierto' : nivel === 'miembro' ? 'bloqueado-clase' : nivel === 'cerrado' ? 'curso-cerrado' : 'sin-acceso' };
       })
     });
@@ -125,8 +125,9 @@ function montarRutasMateriales(app, deps) {
     const nivel = await nivelDeAcceso(d.uid, d, cursoId);
     if (nivel === 'ninguno') throw errorHttp(402, 'Los materiales del curso son parte de la membresía.');
     if (nivel === 'cerrado') throw errorHttp(403, 'Este curso todavía no se abre para ti.');
-    if (nivel === 'prueba') { if (i >= lista.length - 1) throw errorHttp(402, 'El último material del curso se abre con la membresía.'); }
-    else if (nivel !== 'admin' && !desbloqueado(m, await progreso(d.uid, cursoId))) throw errorHttp(403, 'Se desbloquea al terminar la clase ' + m.desbloqueaEnClase + '.');
+    if (nivel === 'prueba' && i >= lista.length - 1) throw errorHttp(402, 'El último material del curso se abre con la membresía.');
+    // La prueba gratuita también respeta "se abre al terminar la clase N" (igual que el socio de pago)
+    if (nivel !== 'admin' && !desbloqueado(m, await progreso(d.uid, cursoId))) throw errorHttp(403, 'Se desbloquea al terminar la clase ' + m.desbloqueaEnClase + '.');
     res.json({ url: urlAbsoluta(m.url), titulo: m.titulo });
   }));
 

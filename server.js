@@ -263,7 +263,9 @@ app.post('/api/video-playback', requireFirebaseUser, async (req, res) => {
     // La prueba cubre todas las clases del curso elegido MENOS la última (como Zoorigen y Alintec).
     const isTrial = trialId !== undefined && trialId !== null && String(trialId) === String(courseId)
       && Number(entry.lesson.index) < (entry.course.lessons || []).length - 1;
-    if (!isTrial && !tieneMembresia) {
+    // La clase marcada como vista previa en el catálogo se puede VER sin membresía (como Alintec)
+    const esVistaPrevia = entry.lesson.isPreview === true;
+    if (!isTrial && !tieneMembresia && !esVistaPrevia) {
       return res.status(402).json({ error: 'Esta clase se desbloquea con la membresía.' });
     }
     // Cursos escalonados: con membresía, el curso debe estar abierto (ver services/acceso.js).
@@ -415,6 +417,10 @@ app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, r
       mode: 'subscription',
       payment_method_types: ['card'],
       customer_email: email,
+      // Muestra «Agregar código» en el formulario de pago (los códigos se crean en el panel de Stripe), como Zoorigen y Alintec
+      allow_promotion_codes: true,
+      // Sin Stripe Link (pago directo con tarjeta, sin verificación por teléfono), como Zoorigen
+      wallet_options: { link: { display: 'never' } },
       line_items: [{
         price_data: {
           currency: 'mxn',

@@ -77,6 +77,12 @@ function montarRutasQuiz(app, deps) {
       const miembro = mSnap.exists ? (mSnap.data() || {}) : {};
       const prueba = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null && String(miembro.trialCourseId) === cursoId;
       if (!deps.tieneMembresia(miembro) && !prueba) throw errorHttp(402, 'Las preguntas son parte de la membresía.');
+      // Cursos escalonados: con membresía, el curso debe estar abierto (igual que materiales y video)
+      if (deps.tieneMembresia(miembro) && deps.evaluarAcceso) {
+        const { acceso } = await deps.evaluarAcceso(d.uid, d);
+        const info = acceso.cursos && acceso.cursos[cursoId];
+        if (info && !info.abierto) throw errorHttp(403, 'Este curso todavía no se abre para ti.');
+      }
     }
     const q = ((await leer(cursoId))[String(i)] || [])[k];
     if (!q) throw errorHttp(404, 'Esa pregunta no existe.');

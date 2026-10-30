@@ -19,7 +19,8 @@ function permisoParaClase({ curso, indice, miembro, tieneMembresia, esAdmin, hec
   if (!esAdmin) {
     const enPrueba = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null
       && String(miembro.trialCourseId) === String(curso.courseId) && indice < total - 1;
-    if (!tieneMembresia && !enPrueba) {
+    const esVistaPrevia = !!((curso.lessons || [])[indice] && curso.lessons[indice].isPreview === true);
+    if (!tieneMembresia && !enPrueba && !esVistaPrevia) {
       return { codigo: 402, error: 'Esta clase se desbloquea con la membresía.' };
     }
   }
