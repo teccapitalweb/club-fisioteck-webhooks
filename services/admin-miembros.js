@@ -10,6 +10,7 @@
 const { esAdminPorToken } = require('./certificados');
 const { nivelDe } = require('./logros');
 const { limpiarTexto } = require('./texto-seguro');
+const { suscripcionViva } = require('./suscripcion');
 
 const COL_ACCIONES = 'adminAcciones', COL_PAPELERA = 'miembrosPapelera', MAX_MIEMBROS = 500;
 const errorHttp = (status, mensaje) => { const e = new Error(mensaje); e.status = status; return e; };
@@ -114,7 +115,8 @@ function montarRutasAdminMiembros(app, deps) {
     if (!s.exists) throw errorHttp(404, 'Ese miembro no existe.');
     const m = { uid, ...s.data() };
     if (esAdminPorToken({ email: m.email, email_verified: true })) throw errorHttp(403, 'Una cuenta de administrador no se elimina desde aquí.');
-    if (m.status === 'active' && m.stripeSubscriptionId) throw errorHttp(409, 'Tiene una suscripción activa. Primero quítale el acceso (o cancela su suscripción) y luego elimínalo.');
+    // Se pregunta a Stripe (no solo al estado guardado): una suscripción viva seguiría cobrando a una cuenta que ya no existe
+    if (await suscripcionViva(stripe, m)) throw errorHttp(409, 'Su suscripción de Stripe sigue viva y podría volver a cobrarle. Primero usa «Quitar acceso» (cancela el cobro) y luego elimínalo.');
     const copia = { ...s.data(), uid, eliminadoPor: String(d.email || ''), eliminadoEn: ahora().toISOString(), mensajeEliminar: limpiarTexto(req.body && req.body.mensaje, 200) };
     await db.collection(COL_PAPELERA).doc(uid).set(copia);
     await autenticacion(uid, { disabled: true });

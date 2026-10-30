@@ -66,6 +66,7 @@ const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || '';
 
 // Correos del Club: primero Resend (dominio propio de FisioTeck); si no está configurado, EmailJS como hasta ahora.
 const correoSvc = require('./services/correo');
+const suscripcion = require('./services/suscripcion'); // doble cobro, cobro rechazado, cambios de la suscripción en Stripe
 async function sendEmailJS(toEmail, subject, htmlMessage) {
   if (correoSvc.configurado()) {
     const texto = String(htmlMessage).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -358,6 +359,17 @@ async function findMemberByEmail(email) {
   return { uid: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
+// Miembro de un aviso de Stripe: por la cuenta guardada en la suscripción, luego por la suscripción y al final por correo
+// (si la persona cambia de correo, sus renovaciones no se pierden; como Alintec y Zoorigen)
+async function miembroDeStripe({ uid, subscriptionId, email }) {
+  if (uid) { const d = await db.collection('members').doc(String(uid)).get(); if (d.exists) return { uid: d.id, ...d.data() }; }
+  if (subscriptionId) {
+    const s = await db.collection('members').where('stripeSubscriptionId', '==', String(subscriptionId)).limit(1).get();
+    if (!s.empty) return { uid: s.docs[0].id, ...s.docs[0].data() };
+  }
+  return email ? findMemberByEmail(email) : null;
+}
+
 // ===== HELPER: Determine plan type from price ID =====
 // ⛔ Filtro multi-proyecto (2da capa): valida por price ID real, cubre casos
 // donde el otro club NO manda metadata.source (el filtro por source se salta
@@ -384,6 +396,10 @@ app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, r
     if (!['mensual', 'anual'].includes(plan)) {
       return res.status(400).json({ error: 'Plan inválido (mensual o anual)' });
     }
+    // Sin doble cobro: quien ya tiene una suscripción viva no abre otra (como Zoorigen)
+    const yaMiembro = (await db.collection('members').doc(uid).get()).data();
+    const bloqueo = suscripcion.bloqueoDeCobro(yaMiembro, memberHasPremiumAccess);
+    if (bloqueo) return res.status(bloqueo.status).json({ error: bloqueo.mensaje, codigo: bloqueo.codigo });
 
     // ← PRECIO DINÁMICO: se lee de config/club en Firestore en cada checkout.
     // Ya no se usan los Price IDs fijos de Stripe para checkouts nuevos.
@@ -556,6 +572,11 @@ async function handleStripeWebhook(req, res) {
           console.log('No email in checkout session');
           break;
         }
+        // Solo un pago confirmado activa la membresía (como Zoorigen)
+        if (session.payment_status && !['paid', 'no_payment_required'].includes(session.payment_status)) {
+          console.log(`Checkout sin pago confirmado (${session.payment_status}): ${email}`);
+          break;
+        }
 
         // Get subscription details
         let planType = planFromMeta;
@@ -590,6 +611,10 @@ async function handleStripeWebhook(req, res) {
         } else {
           nextDate.setMonth(nextDate.getMonth() + 1);
         }
+        // Fecha real del fin del periodo en Stripe (si se puede leer); la calculada queda de respaldo
+        let finStripe = '';
+        if (subscriptionId) { try { finStripe = suscripcion.finDePeriodo(await stripe.subscriptions.retrieve(subscriptionId)); } catch (e) { /* respaldo */ } }
+        const nextPaymentStr = finStripe || nextDate.toISOString().split('T')[0];
 
         const paymentRecord = {
           date: now,
@@ -617,10 +642,11 @@ async function handleStripeWebhook(req, res) {
         if (member) {
           await db.collection('members').doc(member.uid).update({
             status: 'active',
-            accessUntil: '', cancelledAt: '', paymentFailedAt: '',
+            accessUntil: '', cancelledAt: '', paymentFailedAt: '', canceladoPor: '',
+            pagoPendiente: false, suscripcionTerminada: false, stripeCancelled: false,
             plan: planType,
             lastPaymentDate: now,
-            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            nextPaymentDate: nextPaymentStr,
             paymentMethod: 'Stripe',
             stripeCustomerId: session.customer || '',
             stripeSubscriptionId: subscriptionId,
@@ -648,7 +674,7 @@ async function handleStripeWebhook(req, res) {
             status: 'active',
             startDate: now,
             lastPaymentDate: now,
-            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            nextPaymentDate: nextPaymentStr,
             paymentMethod: 'Stripe',
             stripeCustomerId: session.customer || '',
             stripeSubscriptionId: subscriptionId,
@@ -695,10 +721,11 @@ async function handleStripeWebhook(req, res) {
         // fijo, así que la identidad se valida por metadata.source de la
         // SUSCRIPCIÓN (nuestros checkouts la graban siempre). El check de price
         // legacy queda solo como fallback para subs viejas sin metadata.
-        let subMeta = {};
+        let subMeta = {}, subFin = '';
         try {
           const subForMeta = await stripe.subscriptions.retrieve(subscriptionId);
           subMeta = subForMeta.metadata || {};
+          subFin = suscripcion.finDePeriodo(subForMeta);
         } catch (e) {
           console.warn('No se pudo leer metadata de la sub:', e.message);
         }
@@ -744,13 +771,16 @@ async function handleStripeWebhook(req, res) {
           paymentMethod: 'Stripe'
         };
 
-        const member = await findMemberByEmail(email);
-        if (member) {
+        const member = await miembroDeStripe({ uid: subMeta.firebaseUid, subscriptionId, email });
+        if (member && member.status === 'inactive' && member.canceladoPor) {
+          console.warn(`Renovación de un miembro al que el administrador quitó el acceso: ${email} (revisa Stripe)`);
+        } else if (member) {
           await db.collection('members').doc(member.uid).update({
             status: 'active',
             accessUntil: '', cancelledAt: '', paymentFailedAt: '',
+            pagoPendiente: false, suscripcionTerminada: false,
             lastPaymentDate: now,
-            nextPaymentDate: nextDate.toISOString().split('T')[0],
+            nextPaymentDate: suscripcion.finDePeriodo(invoice) || subFin || nextDate.toISOString().split('T')[0],
             payments: admin.firestore.FieldValue.arrayUnion(paymentRecord),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
@@ -795,11 +825,9 @@ async function handleStripeWebhook(req, res) {
           console.error('Error fetching customer:', e.message);
         }
 
-        if (!email) break;
+        console.log(`Subscription cancelled: ${email || subscription.id}`);
 
-        console.log(`Subscription cancelled: ${email}`);
-
-        const member = await findMemberByEmail(email);
+        const member = await miembroDeStripe({ uid: subscription.metadata?.firebaseUid, subscriptionId: subscription.id, email });
         if (member) {
           // 🛡️ Guarda anti-stale: solo cancelar si la sub coincide con la guardada
           if (member.stripeSubscriptionId && member.stripeSubscriptionId !== subscription.id) {
@@ -808,12 +836,21 @@ async function handleStripeWebhook(req, res) {
           }
 
           const now = new Date().toISOString().split('T')[0];
-          const accessUntil = member.nextPaymentDate || now;
+          // El administrador ya quitó el acceso: no se le devuelve. Cobro rechazado sin resolver: el acceso termina hoy.
+          if (member.status === 'inactive' || member.pagoPendiente) {
+            await db.collection('members').doc(member.uid).update({
+              status: 'inactive', accessUntil: '', pagoPendiente: false, suscripcionTerminada: true, stripeCancelled: true,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            break;
+          }
+          const accessUntil = member.accessUntil || member.nextPaymentDate || now;
 
           await db.collection('members').doc(member.uid).update({
             status: 'cancelled',
-            cancelledAt: now,
+            cancelledAt: member.cancelledAt || now,
             accessUntil: accessUntil,
+            suscripcionTerminada: true, stripeCancelled: true,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
           console.log(`Member cancelled via Stripe event: ${email}`);
@@ -851,21 +888,40 @@ async function handleStripeWebhook(req, res) {
 
         console.log(`Payment failed: ${email}`);
 
-        const member = await findMemberByEmail(email);
+        const member = await miembroDeStripe({ uid: failedSubMeta.firebaseUid, subscriptionId: invoice.subscription, email });
         if (member) {
+          // No se corta el acceso al primer rechazo: Stripe reintenta. Queda «pago pendiente» con unos días de gracia;
+          // si Stripe se rinde, customer.subscription.updated/deleted cierra el acceso.
+          const cambios = suscripcion.cambiosPorCobroFallido(member, new Date());
           await db.collection('members').doc(member.uid).update({
-            status: 'inactive',
-            paymentFailedAt: new Date().toISOString().split('T')[0],
+            ...cambios,
             payments: admin.firestore.FieldValue.arrayUnion({ date: new Date().toISOString().split('T')[0], amount: (invoice.amount_due || 0) / 100, currency: 'MXN', method: 'Stripe', estado: 'failed', status: 'failed', concept: 'Cobro rechazado', invoiceId: invoice.id || '' }),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
-          sendEmailJS(email, 'No pudimos cobrar tu membresía del Club FisioTeck', '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;"><h2 style="color:#0A3E68;">No pudimos cobrar tu membresía</h2><p>Hola <strong>' + escH(member.name || 'Socio') + '</strong>, el cobro de tu membresía fue rechazado y tu acceso quedó en pausa. Actualiza tu tarjeta o vuelve a suscribirte desde el Club para recuperarlo: <a href="https://club.fisioteck.com">club.fisioteck.com</a>.</p><p style="color:#777;font-size:.85rem;">Si ya lo resolviste, ignora este mensaje.</p></div>');
+          const hastaTxt = cambios.accessUntil || member.accessUntil || member.nextPaymentDate || '';
+          sendEmailJS(email, 'No pudimos cobrar tu membresía del Club FisioTeck', '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;"><h2 style="color:#0A3E68;">No pudimos cobrar tu membresía</h2><p>Hola <strong>' + escH(member.name || 'Socio') + '</strong>, el cobro de tu membresía fue rechazado. Stripe lo volverá a intentar en los próximos días' + (hastaTxt ? ' y conservas tu acceso hasta el <strong>' + escH(hastaTxt) + '</strong>' : '') + '.</p><p>Para no perderlo, actualiza tu tarjeta en el Club (Membresía → Gestionar en Stripe): <a href="https://club.fisioteck.com">club.fisioteck.com</a>. No vuelvas a suscribirte: se te cobraría dos veces.</p><p style="color:#777;font-size:.85rem;">Si ya lo resolviste, ignora este mensaje.</p></div>');
 
           await notifyAdmin('payment_failed', {
             memberName: member.name || email,
             memberEmail: email,
             plan: member.plan || 'mensual'
           });
+        }
+        break;
+      }
+
+      // ===== SUBSCRIPTION UPDATED (cancelar/reactivar desde Stripe, past_due, unpaid) =====
+      case 'customer.subscription.updated': {
+        const sub = event.data.object;
+        const subSource = sub.metadata?.source || '';
+        const subPriceId = sub.items?.data?.[0]?.price?.id || '';
+        if (subSource && subSource !== 'fisioteck-club') { console.log(`Ignorado (updated): sub de otro proyecto (source=${subSource})`); break; }
+        if (!subSource && subPriceId && !isOwnPrice(subPriceId)) { console.log(`Ignorado (updated): price de otro proyecto (${subPriceId})`); break; }
+        const member = await miembroDeStripe({ uid: sub.metadata?.firebaseUid, subscriptionId: sub.id });
+        const cambios = suscripcion.cambiosPorSuscripcion(sub, member);
+        if (member && cambios) {
+          await db.collection('members').doc(member.uid).update({ ...cambios, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+          console.log(`Suscripción actualizada (${sub.status}${sub.cancel_at_period_end ? ', cancela al final del periodo' : ''}): ${member.email || member.uid}`);
         }
         break;
       }
@@ -1073,7 +1129,7 @@ app.post('/api/reactivate-subscription', requireFirebaseUser, limitarPago, async
     const uid = req.firebaseUser.uid, ref = db.collection('members').doc(uid), doc = await ref.get();
     if (!doc.exists) return res.status(404).json({ error: 'No encontramos tu cuenta.' });
     const m = doc.data() || {};
-    if (m.status !== 'cancelled' || !m.stripeSubscriptionId) return res.status(409).json({ error: 'Tu suscripción no está cancelada o ya terminó. Suscríbete de nuevo desde el Club.' });
+    if (m.status !== 'cancelled' || !m.stripeSubscriptionId || m.suscripcionTerminada) return res.status(409).json({ error: 'Tu suscripción no está cancelada o ya terminó. Suscríbete de nuevo desde el Club.' });
     await stripe.subscriptions.update(m.stripeSubscriptionId, { cancel_at_period_end: false });
     await ref.update({ status: 'active', accessUntil: '', cancelledAt: '', stripeCancelled: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     res.json({ success: true });
@@ -1181,7 +1237,8 @@ function calcularFechaVencimientoBackend(data) {
 app.post('/api/expire-inactive-members', async (req, res) => {
   try {
     // Seguridad: exigir token admin
-    const providedToken = String(req.get('x-admin-token') || req.body?.token || '');
+    // Encabezado x-admin-token (recomendado), cuerpo o ?token= (como lo indica la documentación para cron-job.org)
+    const providedToken = String(req.get('x-admin-token') || req.body?.token || req.query.token || '');
     const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
     if (!ADMIN_TOKEN || !iguales(providedToken, ADMIN_TOKEN)) {
       return res.status(401).json({ error: 'No autorizado.' });
@@ -1258,7 +1315,7 @@ const depsAcceso = { db, admin, cargarCatalogo: loadBunnyCatalog, tieneMembresia
 const recordatorios = require('./services/recordatorios').crearRecordatorios({ db, admin, stripe, tieneMembresia: memberHasPremiumAccess, cargarCatalogo: loadBunnyCatalog, leerPreciosConfig, apiPublica: 'https://web-production-cd020.up.railway.app' });
 recordatorios.montarRutas(app);
 // Historial del servidor y acciones de miembros con bitácora de quién hizo qué (services/rutas-servidor.js)
-require('./services/rutas-servidor').montarRutasServidor(app, { db, admin, bitacora: bitacoraServidor });
+require('./services/rutas-servidor').montarRutasServidor(app, { db, admin, stripe, bitacora: bitacoraServidor });
 require('./services/admin-extra').montarRutasAdminExtra(app, { db, admin, registrarCatalogoExtra, cargarCatalogo: loadBunnyCatalog }); // Bunny, catálogo de cursos nuevos y estado de servicios
 require('./services/acceso').montarRutasAcceso(app, depsAcceso); // /api/acceso, /api/retos (escalonado y retos calificados)
 require('./services/resenas').montarRutasResenas(app, depsAcceso); // reseñas de cursos (solo quien tiene el certificado)
@@ -1268,6 +1325,7 @@ require('./services/directorio').montarRutasDirectorio(app, depsAcceso); // dire
 require('./services/cuenta').montarRutasCuenta(app, { db, admin, stripe, tieneMembresia: memberHasPremiumAccess }); // eliminar mi cuenta (borra todo lo de la persona)
 require('./services/admin-miembros').montarRutasAdminMiembros(app, { db, admin, stripe }); // pagos desde Stripe, papelera de miembros y retos y XP del panel
 require('./services/avisos').montarRutasAvisos(app, { db, admin }); // avisos personales de la campana (respuestas del foro)
+require('./services/webinars').montarRutasWebinars(app, depsAcceso); // clases en vivo: enlace y grabación solo para miembros (nunca en content.json)
 require('./services/libros').montarRutasLibros(app, depsAcceso); // libros de lectura que se abren con retos
 depsAcceso.sembrarLibros().catch(e => console.warn('Libros base (siembra):', e.message));
 const datosCuriosos = require('./services/datos-curiosos').crearServicio({ db, admin }); // dato curioso martes y viernes en la campana

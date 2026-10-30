@@ -5,10 +5,11 @@
 //  GET  /api/admin/acciones?limite=100               bitácora: quién hizo qué desde el panel (nunca se borra)
 //  POST /api/admin/miembros/:uid/activar             { plan: 'mensual'|'anual', dias?, mensaje? }  activa sin cobro (cortesía o ajuste)
 //  POST /api/admin/miembros/:uid/regalar             { dias?: 1..365 (30), mensaje? }              suma días al acceso actual
-//  POST /api/admin/miembros/:uid/cancelar            { mensaje? }                                  pasa la cuenta a sin membresía
+//  POST /api/admin/miembros/:uid/cancelar            { mensaje? }                                  cancela YA su suscripción de Stripe y pasa la cuenta a sin membresía
 // Nada se borra: solo cambia el estado de acceso. El avance, los certificados, los pagos y el historial del miembro se conservan.
 const { esAdminPorToken } = require('./certificados');
 const { limpiarTexto, aFecha } = require('./texto-seguro');
+const { cancelarEnStripe } = require('./suscripcion');
 
 const COL_ACCIONES = 'adminAcciones';
 const errorHttp = (status, mensaje) => { const e = new Error(mensaje); e.status = status; return e; };
@@ -81,7 +82,7 @@ function montarRutasServidor(app, deps) {
     if (!Number.isInteger(dias) || dias < 1 || dias > 730) throw errorHttp(400, 'Los días deben ser un entero de 1 a 730.');
     const hasta = ahora(); hasta.setUTCDate(hasta.getUTCDate() + dias);
     await db.collection('members').doc(m.uid).update({
-      status: 'active', plan: b.plan, nextPaymentDate: fmtFecha(hasta), accessUntil: '', cancelledAt: '', activadoManualmente: true, activadoPor: String(d.email || ''), activadoEn: ahora().toISOString(), updatedAt: marca()
+      status: 'active', plan: b.plan, nextPaymentDate: fmtFecha(hasta), accessUntil: '', cancelledAt: '', canceladoPor: '', activadoManualmente: true, activadoPor: String(d.email || ''), activadoEn: ahora().toISOString(), updatedAt: marca()
     });
     await anotar(d, 'activar', m, 'Activó el plan ' + b.plan + ' sin cobro por ' + dias + ' días' + (mensajeDe(b) ? ' · ' + mensajeDe(b) : ''), { plan: b.plan, dias, hasta: fmtFecha(hasta), mensaje: mensajeDe(b) });
     res.json({ ok: true, plan: b.plan, hasta: fmtFecha(hasta) });
@@ -106,9 +107,11 @@ function montarRutasServidor(app, deps) {
 
   app.post('/api/admin/miembros/:uid/cancelar', conAdmin('cancelar', async (req, res, d) => {
     const m = await leerMiembro(req.params.uid), b = req.body || {};
-    await db.collection('members').doc(m.uid).update({ status: 'inactive', canceladoPor: String(d.email || ''), canceladoEn: ahora().toISOString(), updatedAt: marca() });
-    await anotar(d, 'cancelar', m, 'Quitó el acceso (la cuenta pasa a sin membresía; todo su historial se conserva)' + (mensajeDe(b) ? ' · ' + mensajeDe(b) : ''), { mensaje: mensajeDe(b) });
-    res.json({ ok: true });
+    // Primero se cancela el cobro en Stripe: si Stripe falla, no se quita el acceso (si no, se le seguiría cobrando sin acceso)
+    const st = await cancelarEnStripe(deps.stripe, m.suscripcionTerminada ? '' : m.stripeSubscriptionId);
+    await db.collection('members').doc(m.uid).update({ status: 'inactive', accessUntil: '', pagoPendiente: false, ...(m.stripeSubscriptionId ? { suscripcionTerminada: true, stripeCancelled: true } : {}), canceladoPor: String(d.email || ''), canceladoEn: ahora().toISOString(), updatedAt: marca() });
+    await anotar(d, 'cancelar', m, 'Quitó el acceso' + (st.cancelada ? ' y canceló su suscripción en Stripe' : '') + ' (la cuenta pasa a sin membresía; todo su historial se conserva)' + (mensajeDe(b) ? ' · ' + mensajeDe(b) : ''), { mensaje: mensajeDe(b), stripeCancelada: !!st.cancelada });
+    res.json({ ok: true, stripeCancelada: !!st.cancelada });
   }));
 }
 
