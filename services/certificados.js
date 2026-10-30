@@ -270,6 +270,20 @@ function montarRutasCertificados(app, deps) {
     });
   }));
 
+  // Miembros con cursos terminados y sin certificado (solo lectura; cada miembro confirma su nombre y emite desde su cuenta).
+  app.get('/api/admin/certificados/pendientes', conAdmin(async (req, res) => {
+    const sn = await db.collection('members').limit(1000).get();
+    const miembros = [];
+    for (const doc of sn.docs) {
+      const m = doc.data() || {};
+      const p = await pendientesDe(doc.id, await leerProgreso(doc.id));
+      if (!p.length) continue;
+      miembros.push({ uid: doc.id, nombre: String(m.name || ''), email: String(m.email || ''), nombreConfirmado: !!m.nombreCertificadoConfirmadoEn,
+        cursos: p.map(x => ({ cursoId: String(x.curso.courseId), titulo: x.curso.title, terminadoEn: x.terminadoEn ? x.terminadoEn.toISOString() : null })) });
+    }
+    res.json({ miembros, totalCursos: miembros.reduce((n, m) => n + m.cursos.length, 0) });
+  }));
+
   app.post('/api/admin/certificados', conAdmin(async (req, res, d) => {
     if (!llave()) return sinLlave(res);
     const { uid, email, courseId, nombre } = req.body || {};
