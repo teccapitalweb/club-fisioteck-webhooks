@@ -109,7 +109,7 @@ function fakeDb(semilla) {
 }
 async function levantar(semilla) {
   const db = fakeDb(semilla);
-  const tokens = { socio: { uid: 'u1', email: 's@mail.com', email_verified: true } };
+  const tokens = { socio: { uid: 'u1', email: 's@mail.com', email_verified: true }, admin: { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true } };
   const admin = { auth: () => ({ verifyIdToken: async t => { if (!tokens[t]) throw new Error('x'); return tokens[t]; } }) };
   const deps = { db, admin, cargarCatalogo: () => catalogo, tieneMembresia: m => m.status === 'active' };
   const app = express();
@@ -335,4 +335,15 @@ test('antiguo: con 2 clases terminadas el curso se conserva; con 1 sola vuelve a
   const m = { status: 'active', startDate: '2026-05-01', payments: [{ date: '2026-10-27', amount: 199 }] };
   const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 30, 18)), avances: { 1: 1, 2: 2, 3: 5 } });
   assert.deepEqual(abiertos(a), [2, 3]); assert.equal(a.cursos['1'].abierto, false); assert.equal(a.cursos['1'].dias, 5);
+});
+
+test('admin: diagnóstico del acceso de un miembro (solo lectura) con el motivo', async () => {
+  const s = await levantar({ 'members/u1': { status: 'active', email: 'a@m.com', startDate: '2026-01-10' }, 'config/club': { escalonadoActivo: true, escalonadoDesde: '2026-10-29' } });
+  try {
+    const sinPermiso = await s.llamar('/api/admin/acceso-miembro/u1', null, 'socio'); assert.equal(sinPermiso.status, 403);
+    const r = await s.llamar('/api/admin/acceso-miembro/u1', null, 'admin');
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.motivo, 'anterior'); assert.equal(r.cuerpo.calendario.activo, true);
+    assert.equal(r.cuerpo.miembro.tieneMembresia, true); assert.equal(r.cuerpo.abiertos, r.cuerpo.total);
+    assert.equal((await s.llamar('/api/admin/acceso-miembro/nadie', null, 'admin')).status, 404);
+  } finally { s.cerrar(); }
 });

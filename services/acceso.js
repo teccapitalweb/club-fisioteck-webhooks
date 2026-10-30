@@ -244,7 +244,7 @@ function montarRutasAcceso(app, deps) {
   deps.leerRetosSuperados = leerRetos;
 
   // Reutilizable por el resto del servidor (video, progreso)
-  async function evaluar(uid, decoded) {
+  async function evaluar(uid, decoded, soloLeer) {
     const [mSnap, cfgSnap] = await Promise.all([db.collection('members').doc(uid).get(), db.collection('config').doc('club').get()]);
     const miembro = mSnap.exists ? (mSnap.data() || {}) : {};
     const retos = await leerRetos(uid);
@@ -262,14 +262,36 @@ function montarRutasAcceso(app, deps) {
     let guardado = datosPremios.adelantoRetos && datosPremios.adelantoRetos.cursoId ? String(datosPremios.adelantoRetos.cursoId) : null;
     let acceso = calcularAcceso({ ...params, adelantoRetos: guardado });
     // Primera vez que se completan los retos pedidos: se abre el curso que seguía y se guarda para que no se repita
-    if (acceso.escalonado && !guardado && acceso.adelanto.estado === 'disponible' && acceso.adelanto.ok) {
+    if (!soloLeer && acceso.escalonado && !guardado && acceso.adelanto.estado === 'disponible' && acceso.adelanto.ok) {
       guardado = acceso.adelanto.cursoId;
       await db.collection('members').doc(uid).collection('progress').doc('premios').set({ adelantoRetos: { cursoId: guardado, fecha: new Date().toISOString(), retos: acceso.adelanto.total }, actualizadoMs: Date.now() }, { merge: true });
       acceso = calcularAcceso({ ...params, adelantoRetos: guardado });
     }
-    return { miembro, acceso, retos };
+    return { miembro, acceso, retos, cfg: cfgSnap.exists ? cfgSnap.data() : {} };
   }
   deps.evaluarAcceso = evaluar;
+
+  // Diagnóstico para el administrador: por qué un miembro ve sus cursos abiertos o cerrados (solo lectura, no guarda nada)
+  //  GET /api/admin/acceso-miembro/:uid  →  datos de su cuenta, la configuración del calendario y el resultado
+  app.get('/api/admin/acceso-miembro/:uid', async (req, res) => {
+    try {
+      const d = await sesion(req, res); if (!d) return;
+      if (!esAdminPorToken(d)) return res.status(403).json({ error: 'Solo los administradores pueden hacer esto.' });
+      const uid = String(req.params.uid);
+      const snap = await db.collection('members').doc(uid).get();
+      if (!snap.exists) return res.status(404).json({ error: 'Ese miembro no existe.' });
+      const m = snap.data() || {};
+      const { acceso, cfg } = await evaluar(uid, { uid, email: m.email || '', email_verified: false }, true);
+      const catalogo = deps.cargarCatalogo().courses || [];
+      const fechas = (Array.isArray(m.payments) ? m.payments : []).map(p => p && p.date).filter(Boolean);
+      res.json({
+        miembro: { nombre: m.name || '', email: m.email || '', status: m.status || '', plan: m.plan || '', tieneMembresia: !!deps.tieneMembresia(m), activadoEn: m.activadoEn || '', giftedAt: m.giftedAt || '', startDate: m.startDate || '', lastPaymentDate: m.lastPaymentDate || '', accessUntil: m.accessUntil || '', nextPaymentDate: m.nextPaymentDate || '', pagos: fechas },
+        calendario: { activo: cfg.escalonadoActivo === true, dias: cfg.escalonadoDias || 8, desde: cfg.escalonadoDesde || '', paraTodos: cfg.escalonadoParaTodos === true },
+        inicioCalculado: acceso.inicio || '', motivo: acceso.motivo || (acceso.escalonado ? 'calendario' : ''), escalonado: !!acceso.escalonado, abiertos: Object.values(acceso.cursos || {}).filter(c => c.abierto).length, total: catalogo.length,
+        cursos: catalogo.map(c => ({ id: String(c.courseId), titulo: c.title, abierto: !!(acceso.cursos[String(c.courseId)] || {}).abierto, dias: (acceso.cursos[String(c.courseId)] || {}).dias || 0 }))
+      });
+    } catch (e) { console.error('[acceso-miembro]', e.message); res.status(500).json({ error: 'No se pudo revisar el acceso.' }); }
+  });
 
   app.get('/api/acceso', async (req, res) => {
     try {
