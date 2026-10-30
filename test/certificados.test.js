@@ -205,3 +205,20 @@ test('admin: lista a los miembros con cursos terminados sin certificado', async 
     assert.equal(r.cuerpo.miembros[0].email, 'ana@mail.com'); assert.equal(r.cuerpo.miembros[0].cursos[0].terminadoEn, '2026-08-15T18:00:00.000Z');
   } finally { s.cerrar(); }
 });
+
+test('admin: emite todos los pendientes con el nombre de cada miembro y deja fuera a quien no tiene nombre y apellido', async () => {
+  const s = await levantar({
+    'members/u1': { name: 'ana torres', email: 'ana@mail.com' },
+    'members/u1/progress/courses': { c_11: { completed: [0, 1], updatedAt: '2026-08-15T18:00:00.000Z' } },
+    'members/u2': { name: 'Luis', email: 'luis@mail.com' },
+    'members/u2/progress/courses': { c_11: { completed: [0, 1], updatedAt: '2026-08-16T18:00:00.000Z' } }
+  });
+  try {
+    assert.equal((await s.llamar('/api/admin/certificados/emitir-pendientes', { metodo: 'POST', token: 'socio' })).status, 403);
+    const r = await s.llamar('/api/admin/certificados/emitir-pendientes', { metodo: 'POST', token: 'admin' });
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.emitidos, 1); assert.equal(r.cuerpo.sinNombre.length, 1); assert.equal(r.cuerpo.sinNombre[0].email, 'luis@mail.com');
+    const c = [...s.db.datos.entries()].filter(([k]) => k.startsWith('certificados/')).map(([, v]) => v);
+    assert.equal(c.length, 1); assert.equal(c[0].nombre, 'Ana Torres'); assert.equal(c[0].emitidoEn, '2026-08-15T18:00:00.000Z');
+    assert.equal((await s.llamar('/api/admin/certificados/emitir-pendientes', { metodo: 'POST', token: 'admin' })).cuerpo.emitidos, 0, 'no duplica');
+  } finally { s.cerrar(); }
+});

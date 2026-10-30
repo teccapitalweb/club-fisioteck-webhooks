@@ -284,6 +284,26 @@ function montarRutasCertificados(app, deps) {
     res.json({ miembros, totalCursos: miembros.reduce((n, m) => n + m.cursos.length, 0) });
   }));
 
+  // El administrador emite de una vez los pendientes con el nombre que ya tiene cada miembro (si trae nombre y apellido). Con la fecha en que terminaron; sin correos.
+  app.post('/api/admin/certificados/emitir-pendientes', conAdmin(async (req, res) => {
+    if (!llave()) return sinLlave(res);
+    const sn = await db.collection('members').limit(1000).get();
+    let emitidos = 0; const sinNombre = [];
+    for (const doc of sn.docs) {
+      const m = doc.data() || {};
+      const p = await pendientesDe(doc.id, await leerProgreso(doc.id));
+      if (!p.length) continue;
+      const v = validarNombre(m.name);
+      if (!v.ok) { sinNombre.push({ uid: doc.id, nombre: String(m.name || ''), email: String(m.email || '') }); continue; }
+      for (const x of p) {
+        const cert = construirCertificado({ uid: doc.id, curso: x.curso, nombre: v.nombre, email: m.email || '', origen: 'club', ahora: x.terminadoEn || new Date() }, llave());
+        await col().doc(cert.folio).set(cert); emitidos++;
+      }
+      try { await db.collection('members').doc(doc.id).set({ name: v.nombre, nombreCertificadoConfirmadoEn: new Date().toISOString() }, { merge: true }); } catch (e) { console.warn('[certificados] no se pudo marcar el nombre:', e && e.message); }
+    }
+    res.json({ emitidos, sinNombre });
+  }));
+
   app.post('/api/admin/certificados', conAdmin(async (req, res, d) => {
     if (!llave()) return sinLlave(res);
     const { uid, email, courseId, nombre } = req.body || {};
