@@ -124,7 +124,7 @@ async function levantar(semilla) {
   };
   return { llamar, db, cerrar: () => srv.close() };
 }
-const hoyISO = new Date().toISOString().split('T')[0];
+const hoyISO = new Date(Date.now() - 6 * 3600e3).toISOString().split('T')[0]; // día de México (en UTC cambia a las 6 p. m. y el pago de «hoy» quedaba en el futuro)
 const base = () => ({ 'members/u1': { status: 'active', payments: [{ date: hoyISO }] }, 'config/club': { escalonadoActivo: true } });
 const claves = require('../data/retos-claves.json');
 const respuestasOk = id => Object.fromEntries(claves.quiz[id].map((c, i) => [i, c]));

@@ -22,7 +22,7 @@ function fakeDb(semilla) {
 
 const catalogo = { courses: [1, 2].map(id => ({ courseId: id, title: 'C' + id, lessons: [{ isPreview: true }, {}, {}] })) };
 const tokens = { socio: { uid: 's1', email: 's@mail.com', email_verified: true }, prueba: { uid: 'p1', email: 'p@mail.com', email_verified: true }, gratis: { uid: 'g1', email: 'g@mail.com', email_verified: true }, admin: { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true } };
-const hoy = new Date().toISOString().split('T')[0];
+const hoy = new Date(Date.now() - 6 * 3600e3).toISOString().split('T')[0];
 const MATS = [{ titulo: 'Guía inicial', url: 'https://drive.google.com/file/d/AAA/view', desbloqueaEnClase: 0 }, { titulo: 'Protocolo', url: 'https://drive.google.com/file/d/BBB/view', desbloqueaEnClase: 2 }];
 
 async function levantar(extra = {}) {

@@ -67,7 +67,7 @@ function fakeDb(semilla) {
 }
 
 const catalogo = { courses: [1, 2, 3].map(id => ({ courseId: id, title: 'C' + id, lessons: [{ isPreview: true }, {}] })) };
-const hoy = new Date().toISOString().split('T')[0];
+const hoy = new Date(Date.now() - 6 * 3600e3).toISOString().split('T')[0];
 const usuariosAuth = {};
 async function levantar(semilla) {
   const db = fakeDb(semilla);
@@ -184,15 +184,15 @@ test('premios por nivel: Profesional y Maestro abren un curso cada uno, sumando 
     global.__xpPrueba = 100;
     let est = (await s.llamar('/api/referidos/estado')).cuerpo;
     const prof = () => est.premios.find(p => p.clave === 'nivel-profesional');
-    assert.equal(prof().ganado, false); assert.equal(prof().faltan, 2400);
+    assert.equal(prof().ganado, false); assert.equal(prof().faltan, 3900);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 2, clave: 'nivel-profesional' })).status, 403, 'sin ganarlo no se puede canjear');
-    global.__xpPrueba = 2500;
+    global.__xpPrueba = 4000;
     est = (await s.llamar('/api/referidos/estado')).cuerpo;
     assert.equal(prof().ganado, true); assert.equal(est.premios.find(p => p.clave === 'nivel-maestro').ganado, false);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 2, clave: 'nivel-profesional' })).status, 200);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 3, clave: 'nivel-profesional' })).status, 409, 'cada premio se usa una vez');
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 3 })).status, 403, 'ya no queda otro premio');
-    global.__xpPrueba = 6100;
+    global.__xpPrueba = 15100;
     est = (await s.llamar('/api/referidos/estado')).cuerpo;
     assert.equal(est.premios.find(p => p.clave === 'nivel-maestro').ganado, true);
     assert.equal((await s.llamar('/api/premios/usar', { cursoId: 3 })).status, 200);

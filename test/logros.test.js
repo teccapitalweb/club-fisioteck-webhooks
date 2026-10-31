@@ -10,8 +10,8 @@ const L = require('../services/logros');
 
 test('niveles, XP de retos antiguos y racha', () => {
   assert.equal(L.nivelDe(0).nombre, 'Estudiante');
-  assert.equal(L.nivelDe(2500).nombre, 'Profesional');
-  assert.deepEqual([L.nivelDe(2000).siguiente.faltan, L.nivelDe(2000).porcentaje], [500, 80]);
+  assert.equal(L.nivelDe(4000).nombre, 'Profesional');
+  assert.deepEqual([L.nivelDe(3200).siguiente.faltan, L.nivelDe(3200).porcentaje], [800, 80]);
   assert.equal(L.nivelDe(99999).siguiente, null);
   assert.equal(L.xpDeReto('x', { xp: 33 }), 33);
   assert.equal(L.xpDeReto('x', { mejor: 9, total: 10 }), 110, 'regla de siempre: 10 por acierto + 20 si pasa el 80 %');
@@ -193,8 +193,8 @@ function tokensExtra() { /* los tokens socio y gratis ya existen en este archivo
 
 test('el XP de práctica diaria (reto del día y flashcards) tiene un tope de por vida de 600', () => {
   assert.equal(L.TOPE_XP_PRACTICA, 600);
-  assert.equal(L.LEVELS[1].min, 2500, 'Profesional no se alcanza solo con retos y práctica');
-  assert.equal(L.LEVELS[4].min, 6000);
+  assert.equal(L.LEVELS[1].min, 4000, 'Profesional no se alcanza solo con retos y práctica');
+  assert.equal(L.LEVELS[4].min, 15000);
 });
 
 test('insignias de comunidad: Embajador con 1 invitado válido y La manada crece con 4', () => {

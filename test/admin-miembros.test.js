@@ -113,14 +113,14 @@ test('retos y XP: resumen, por tipo y adelanto de cada miembro', async () => {
   const s = await levantar({
     'members/m1': { name: 'Ana', email: 'a@m.com', status: 'active', plan: 'mensual' }, 'members/m2': { name: 'Beto', email: 'b@m.com', status: 'registered' },
     'members/m1/progress/retos': { superados: { 'q-1': { mejor: 3, total: 3 }, 'o-1': {}, 'd-d-sala': {}, 'h-1': {} } }, 'members/m1/progress/logros': { racha: 4, ultimaVisita: '2026-10-27' }, 'members/m1/progress/premios': { adelantoRetos: { cursoId: '77' } },
-    'retosClasificacion/m1': { xp: 2600, retos: 4 }, 'retosClasificacion/m2': { xp: 40, retos: 0 }
+    'retosClasificacion/m1': { xp: 4100, retos: 4 }, 'retosClasificacion/m2': { xp: 40, retos: 0 }
   });
   try {
     assert.equal((await s.llamar('/api/admin/retos-xp', null, 'socio')).status, 403);
     const r = (await s.llamar('/api/admin/retos-xp')).cuerpo;
     assert.equal(r.miembros[0].name, 'Ana'); assert.equal(r.miembros[0].nivel, 'Profesional'); assert.equal(r.miembros[0].racha, 4); assert.equal(r.miembros[0].adelanto, '77');
     assert.equal(r.miembros[0].retos, 4); assert.equal(r.miembros[0].porTipo.quiz, 1);
-    assert.equal(r.resumen.miembros, 2); assert.equal(r.resumen.xpTotal, 2640); assert.equal(r.resumen.adelantosUsados, 1); assert.equal(r.resumen.porNivel.Profesional, 1);
+    assert.equal(r.resumen.miembros, 2); assert.equal(r.resumen.xpTotal, 4140); assert.equal(r.resumen.adelantosUsados, 1); assert.equal(r.resumen.porNivel.Profesional, 1);
   } finally { s.cerrar(); }
 });
 

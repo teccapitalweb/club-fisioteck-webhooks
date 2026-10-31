@@ -16,10 +16,10 @@ const path = require('path');
 const { esAdminPorToken, cursoDeCatalogo, clasesCompletadas } = require('./certificados');
 
 const LEVELS = [
-  // Calibrado como Zoorigen: Profesional ≈ 22 % y Maestro ≈ 66 % del XP que se puede ganar en total (insignias, retos una sola vez, cursos,
-  // invitados, práctica diaria con tope). Profesional no se alcanza solo con retos y Maestro pide terminar casi todo el Club.
-  { nombre: 'Estudiante', min: 0 }, { nombre: 'Profesional', min: 2500 }, { nombre: 'Especialista', min: 3600 },
-  { nombre: 'Experto', min: 4700 }, { nombre: 'Maestro FisioTeck', min: 6000 }
+  // Calibrado sobre el XP que se puede ganar en total (insignias, retos una sola vez, cursos, invitados, práctica diaria con tope). Con las insignias y los retos
+  // nuevos ese total subió a cerca de 28 mil, así que los niveles se subieron: Profesional no se alcanza solo con retos y Maestro pide terminar casi todo el Club.
+  { nombre: 'Estudiante', min: 0 }, { nombre: 'Profesional', min: 4000 }, { nombre: 'Especialista', min: 6500 },
+  { nombre: 'Experto', min: 10000 }, { nombre: 'Maestro FisioTeck', min: 15000 }
 ];
 // id, nombre, descripción, XP, categoría y regla. (El navegador solo pone el ícono.)
 const BADGES = [
