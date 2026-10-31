@@ -359,3 +359,15 @@ test('/api/acceso reutiliza el cálculo reciente y con ?f=1 vuelve a calcular', 
     assert.equal(c.membresia, false, 'con ?f=1 recalcula');
   } finally { s.cerrar(); }
 });
+
+test('quien paga de noche (después de las 6 p. m. en México) ve su primer curso abierto aunque el pago quedó fechado con el día UTC de mañana', () => {
+  const cfgN = { ...cfg, escalonadoDesde: '2026-10-01' };
+  const ahora = new Date(Date.UTC(2026, 9, 31, 2, 0)); // 30 oct, 8 p. m. en México = 31 oct 02:00 UTC
+  const m = { status: 'active', startDate: '2026-10-31', payments: [{ date: '2026-10-31', amount: 199 }] };
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgN, ahora });
+  assert.equal(a.escalonado, true); assert.deepEqual(abiertos(a), [1], 'el primer curso está abierto desde el pago');
+  assert.equal(a.cursos['2'].dias, 8);
+  // con la fecha en hora de México (como se guarda ahora) también
+  const b = calcularAcceso({ miembro: { ...m, payments: [{ date: '2026-10-30', amount: 199 }] }, catalogo, cfg: cfgN, ahora });
+  assert.deepEqual(abiertos(b), [1]); assert.equal(b.cursos['2'].dias, 8);
+});

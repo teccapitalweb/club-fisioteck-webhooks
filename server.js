@@ -33,6 +33,9 @@ bitacoraMemoria.fijarDestino(mensaje => bitacoraServidor.registrarError(mensaje)
 
 // ===== STRIPE INIT =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+// Día de México (AAAA-MM-DD) para fechar pagos: el calendario de cursos cuenta en hora de México y México no usa horario de verano. En UTC, un pago hecho
+// después de las 6 p. m. quedaba fechado «mañana» y el miembro veía todo cerrado hasta la medianoche.
+const diaMexico = () => new Date(Date.now() - 6 * 3600 * 1000).toISOString().split('T')[0];
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
 // Price IDs LEGACY — se conservan SOLO para reconocer suscripciones viejas
@@ -601,7 +604,7 @@ async function handleStripeWebhook(req, res) {
 
         console.log(`Checkout completed: ${email} - Plan: ${planType}`);
 
-        const now = new Date().toISOString().split('T')[0];
+        const now = diaMexico();
         // Monto REAL cobrado (session.amount_total viene en centavos y siempre
         // está presente en checkout.session.completed). Fallback: config actual.
         let amount;
@@ -750,7 +753,7 @@ async function handleStripeWebhook(req, res) {
           || (priceId ? getPlanFromPrice(priceId) : null)
           || 'mensual';
 
-        const now = new Date().toISOString().split('T')[0];
+        const now = diaMexico();
         // Monto REAL cobrado en la renovación (invoice.amount_paid en centavos).
         let amount;
         if (invoice.amount_paid) {
@@ -841,7 +844,7 @@ async function handleStripeWebhook(req, res) {
             break;
           }
 
-          const now = new Date().toISOString().split('T')[0];
+          const now = diaMexico();
           // El administrador ya quitó el acceso: no se le devuelve. Cobro rechazado sin resolver: el acceso termina hoy.
           if (member.status === 'inactive' || member.pagoPendiente) {
             await db.collection('members').doc(member.uid).update({
@@ -901,7 +904,7 @@ async function handleStripeWebhook(req, res) {
           const cambios = suscripcion.cambiosPorCobroFallido(member, new Date());
           await db.collection('members').doc(member.uid).update({
             ...cambios,
-            payments: admin.firestore.FieldValue.arrayUnion({ date: new Date().toISOString().split('T')[0], amount: (invoice.amount_due || 0) / 100, currency: 'MXN', method: 'Stripe', estado: 'failed', status: 'failed', concept: 'Cobro rechazado', invoiceId: invoice.id || '' }),
+            payments: admin.firestore.FieldValue.arrayUnion({ date: diaMexico(), amount: (invoice.amount_due || 0) / 100, currency: 'MXN', method: 'Stripe', estado: 'failed', status: 'failed', concept: 'Cobro rechazado', invoiceId: invoice.id || '' }),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
           });
           const hastaTxt = cambios.accessUntil || member.accessUntil || member.nextPaymentDate || '';

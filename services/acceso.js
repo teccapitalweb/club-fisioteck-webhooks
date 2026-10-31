@@ -94,7 +94,7 @@ function ultimoPago(m) {
 // Miembro antiguo: conserva lo que ya vio y el resto sigue el calendario desde el día de su último pago.
 const CLASES_PARA_CONSERVAR = 2;
 function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos }) {
-  const hoyMx = diaMx(ahora || new Date()), pivoteDia = diaMx(pivote);
+  const hoyMx = diaMx(ahora || new Date()), pivoteDia = diaMx(pivote) > hoyMx ? hoyMx : diaMx(pivote);
   // Un curso cuenta como visto con al menos CLASES_PARA_CONSERVAR clases terminadas; con una sola se vuelve a cerrar y entra al calendario.
   const vistos = new Set(avances ? Object.keys(avances).filter(id => avances[id] >= CLASES_PARA_CONSERVAR) : (iniciados || []).map(String));
   const cursos = {}; let j = 0;
@@ -139,7 +139,7 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const primero = trial && ids.includes(trial) ? trial : ids[0];
   const orden = [primero, ...ids.filter(id => id !== primero)];
 
-  const hoyMx = diaMx(ahora || new Date()), inicioMx = diaMx(inicio);
+  const hoyMx = diaMx(ahora || new Date()), inicioMx = diaMx(inicio) > hoyMx ? hoyMx : diaMx(inicio); // un pago nunca es de «mañana»: los pagos viejos se fecharon en hora UTC
   const dias = Math.max(0, diasEntreDias(inicioMx, hoyMx));
   const nRetos = retosSuperados || 0;
   // Día en que se abre cada curso: el primero (la prueba) desde el pago; los demás cada N días. Si la membresía se venció y se volvió a pagar,
