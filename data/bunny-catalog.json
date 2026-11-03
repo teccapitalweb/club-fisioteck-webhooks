@@ -12,7 +12,7 @@
           "lessonId": 1777912123479,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "58fa738a-ed77-44be-95be-29c81407366e"
         },
@@ -51,7 +51,7 @@
           "lessonId": 1777914182781,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "e646b0a7-0ffa-4df0-9635-a63e878aa3c4"
         },
@@ -98,7 +98,7 @@
           "lessonId": 1777915087745,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "fe7c040e-54f3-44cc-aa26-9f88616b5e9c"
         },
@@ -145,7 +145,7 @@
           "lessonId": 1777915302535,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "542c8048-f905-430e-8c93-55cc62023e3f"
         },
@@ -192,7 +192,7 @@
           "lessonId": 1777913620168,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "b3c85c96-4e62-404c-b603-35c790dcad83"
         },
@@ -231,7 +231,7 @@
           "lessonId": 1777916390490,
           "title": "Sesiones 01, 02 y 03",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "4f0a5df7-78b7-45f3-9b5f-6a5e6a739175"
         },
@@ -254,7 +254,7 @@
           "lessonId": 1777916731010,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "e85562e3-5281-4ac1-b4c1-c26d9c24a0f4"
         },
@@ -301,7 +301,7 @@
           "lessonId": 1777916925112,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "c1586124-f505-4338-ab15-971b9feafd00"
         },
@@ -332,7 +332,7 @@
           "lessonId": 1777912590894,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "193f3fb0-44eb-4e46-b1f4-479ffb325eb9"
         },
@@ -379,7 +379,7 @@
           "lessonId": 1777913843887,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "2bc4ebc4-fb5c-48fc-98d8-1e720da07639"
         },
@@ -418,7 +418,7 @@
           "lessonId": 1777914828962,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "90dbb7a5-8616-423b-8f8e-26acf7678f9c"
         },
@@ -465,7 +465,7 @@
           "lessonId": 1777916541881,
           "title": "Sesión 01",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "95f3a4a2-ede6-45a4-9706-1bd06a8ae505"
         },
@@ -504,7 +504,7 @@
           "lessonId": 1777912150239,
           "title": "Sesiones 01 y 02",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "4e27763c-d512-4e70-a2bc-1c66f6d91356"
         },
@@ -535,7 +535,7 @@
           "lessonId": 1777915750230,
           "title": "Sesiones 01 y 02",
           "index": 0,
-          "isPreview": true,
+          "isPreview": false,
           "videoProvider": "bunny",
           "bunnyVideoId": "198f20fd-140d-49e5-a085-6a92d30e9ffc"
         },

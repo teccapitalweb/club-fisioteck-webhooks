@@ -126,7 +126,7 @@ async function main() {
         desc: `Contenido grabado del curso ${title}.`,
         duration: formatDuration(remote.length),
         sessionNumbers: video.sessionNumbers,
-        isPreview: index === 0,
+        isPreview: false,
         videoProvider: 'bunny',
         bunnyVideoId: upload.videoId,
         bunnyCollectionId: state.collections[title]

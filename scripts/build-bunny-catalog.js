@@ -28,7 +28,7 @@ const catalog = {
       lessonId: lesson.id,
       title: String(lesson.title || '').trim(),
       index,
-      isPreview: lesson.isPreview === true || index === 0,
+      isPreview: lesson.isPreview === true,
       videoProvider: lesson.videoProvider || (lesson.bunnyVideoId ? 'bunny' : 'drive'),
       bunnyVideoId: lesson.bunnyVideoId || previousVideos.get(`${course.id}:${lesson.id}`) || ''
     }))
