@@ -20,6 +20,8 @@ const C = require('./recordatorios-correo');
 
 const ID_CUPON = monto => 'FISIOTECK_RECORDATORIO_' + monto;
 const MARCA = 'fisioteck';
+// Producto fijo del plan mensual en Stripe: el cupón solo vale para él (la cuenta de Stripe se comparte con otros proyectos)
+const PRODUCTO_MENSUAL = 'fisioteck-club-mensual';
 const aMs = v => {
   if (!v) return 0;
   if (v instanceof Date) return v.getTime();
@@ -64,8 +66,17 @@ function crearServicio({
 
   // ───────── Stripe: producto, cupones base y códigos únicos ─────────
   // Un cupón base por monto, con ID fijo, marcado como de FisioTeck (el checkout solo lo aplica al plan mensual). Si ya existe, se reutiliza.
+  // Crea (o reutiliza) el producto fijo del plan mensual. Devuelve su ID, o '' si Stripe no lo permite (entonces el cupón queda como antes).
+  const asegurarProducto = async () => {
+    if (!stripe.products) return '';
+    try { await stripe.products.retrieve(PRODUCTO_MENSUAL); return PRODUCTO_MENSUAL; } catch (err) { if (!noExiste(err)) { console.warn('[Recordatorios] No se pudo leer el producto mensual:', err && err.message); return ''; } }
+    try { await stripe.products.create({ id: PRODUCTO_MENSUAL, name: 'Club FisioTeck · Plan Mensual', metadata: { marca: MARCA } }); return PRODUCTO_MENSUAL; }
+    catch (err) { if (err && /already exists|ya existe/i.test(String(err.message || ''))) return PRODUCTO_MENSUAL; console.warn('[Recordatorios] No se pudo crear el producto mensual:', err && err.message); return ''; }
+  };
   const asegurarCuponBase = async monto => {
-    const id = ID_CUPON(monto);
+    const producto = await asegurarProducto();
+    // Con producto: cupón nuevo con restricción (los cupones viejos no se pueden restringir después); sin producto: el de siempre
+    const id = producto ? ID_CUPON(monto) + '_MENSUAL' : ID_CUPON(monto);
     try {
       const existente = await stripe.coupons.retrieve(id);
       if (existente && existente.metadata && existente.metadata.marca && existente.metadata.marca !== MARCA) throw new Error('El cupón ' + id + ' pertenece a otra marca');
@@ -74,6 +85,7 @@ function crearServicio({
     try {
       await stripe.coupons.create({
         id, name: 'FisioTeck · ' + C.pesos(monto) + ' menos en el primer mes', amount_off: monto * 100, currency: 'mxn', duration: 'once',
+        ...(producto ? { applies_to: { products: [producto] } } : {}),
         metadata: { marca: MARCA, uso: 'recordatorios-pago' }
       });
     } catch (err) { if (!(err && /already exists|ya existe/i.test(String(err.message || '')))) throw err; }
@@ -472,4 +484,4 @@ function crearServicio({
   };
 }
 
-module.exports = { crearServicio, ID_CUPON, MARCA, aMs };
+module.exports = { crearServicio, ID_CUPON, MARCA, PRODUCTO_MENSUAL, aMs };

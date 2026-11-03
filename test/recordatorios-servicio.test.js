@@ -504,3 +504,24 @@ test('cupones base de Stripe: ID fijo, idempotentes y sin tocar los de otra marc
   const c = await m4.nuevo().crearCodigo({ monto: 50, uid: 'ana', paso: 2, venceMs: Date.now() + DIA });
   assert.match(c.codigo, /^FT50-/);
 });
+
+test('cupones atados al producto mensual de FisioTeck cuando Stripe lo permite', async () => {
+  const m = mundo();
+  const productos = new Map();
+  m.stripe.products = {
+    retrieve: async id => { if (!productos.has(id)) throw Object.assign(new Error('No such product'), { code: 'resource_missing' }); return productos.get(id); },
+    create: async d => { productos.set(d.id, d); return d; }
+  };
+  const s = m.nuevo();
+  const id = await s.asegurarCuponBase(50);
+  assert.equal(id, 'FISIOTECK_RECORDATORIO_50_MENSUAL');
+  assert.deepEqual(m.creados.cupones[0].applies_to, { products: ['fisioteck-club-mensual'] });
+  assert.ok(productos.has('fisioteck-club-mensual'), 'crea el producto fijo una vez');
+  await s.asegurarCuponBase(50);
+  assert.equal(m.creados.cupones.length, 1, 'idempotente');
+  // si Stripe no deja leer el producto, el cupón queda como antes (nunca se bloquean los recordatorios)
+  const m2 = mundo();
+  m2.stripe.products = { retrieve: async () => { throw new Error('boom'); }, create: async () => { throw new Error('boom'); } };
+  assert.equal(await m2.nuevo().asegurarCuponBase(50), 'FISIOTECK_RECORDATORIO_50');
+  assert.equal(m2.creados.cupones[0].applies_to, undefined);
+});

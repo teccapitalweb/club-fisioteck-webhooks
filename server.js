@@ -44,6 +44,24 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const PRICE_MENSUAL = process.env.STRIPE_PRICE_MENSUAL || 'price_1TPYw1PBgqsOPfUYOJBKrQiu';
 const PRICE_ANUAL = process.env.STRIPE_PRICE_ANUAL || 'price_1TPYxlPBgqsOPfUYsgjdFsVM';
 
+// Productos fijos de Stripe por plan: el precio sigue siendo dinámico, pero cuelga de un producto conocido para que los cupones se puedan
+// restringir al plan mensual de FisioTeck (la cuenta de Stripe se comparte con otros proyectos). Si Stripe falla, se usa el producto en línea de siempre.
+const PRODUCTOS_PLAN = { mensual: { id: 'fisioteck-club-mensual', nombre: 'Club FisioTeck · Plan Mensual' }, anual: { id: 'fisioteck-club-anual', nombre: 'Club FisioTeck · Plan Anual' } };
+const productosListos = {};
+async function productoDelPlan(plan) {
+  const p = PRODUCTOS_PLAN[plan === 'anual' ? 'anual' : 'mensual'];
+  if (productosListos[p.id]) return p.id;
+  try {
+    try { await stripe.products.retrieve(p.id); }
+    catch (err) {
+      if (!(err && (err.code === 'resource_missing' || err.statusCode === 404))) throw err;
+      try { await stripe.products.create({ id: p.id, name: p.nombre, metadata: { marca: 'fisioteck' } }); }
+      catch (e2) { if (!/already exists|ya existe/i.test(String(e2 && e2.message))) throw e2; }
+    }
+    productosListos[p.id] = true; return p.id;
+  } catch (e) { console.warn('[Checkout] Sin producto fijo (' + p.id + '), se usa el producto en línea:', e && e.message); return ''; }
+}
+
 // ===== PRECIOS DINÁMICOS desde Firestore (config/club) =====
 // El admin los edita en su panel → Configuración → Precios de la Membresía.
 async function leerPreciosConfig() {
@@ -416,6 +434,7 @@ app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, r
       return res.status(400).json({ error: 'El precio configurado ($' + montoMXN + ' MXN) es menor al mínimo de Stripe ($10 MXN). Revisa Configuración en el panel admin.' });
     }
 
+    const productoFijo = await productoDelPlan(plan);
     const sessionConfig = {
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -429,9 +448,11 @@ app.post('/api/create-checkout', requireFirebaseUser, limitarPago, async (req, r
           currency: 'mxn',
           unit_amount: Math.round(montoMXN * 100),
           recurring: { interval: plan === 'anual' ? 'year' : 'month' },
-          product_data: {
-            name: `Club FisioTeck · Plan ${plan === 'anual' ? 'Anual' : 'Mensual'}`
-          }
+          ...(productoFijo ? { product: productoFijo } : {
+            product_data: {
+              name: `Club FisioTeck · Plan ${plan === 'anual' ? 'Anual' : 'Mensual'}`
+            }
+          })
         },
         quantity: 1
       }],
