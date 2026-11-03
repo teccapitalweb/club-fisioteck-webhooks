@@ -1175,6 +1175,7 @@ const NEWSDATA_API_KEY = process.env.NEWSDATA_API_KEY || ''; // antes estaba esc
 // Noticias guardadas en Firestore con tarea diaria y aviso en la campana (services/noticias.js, como Alintec y Zoorigen).
 // La ruta /api/news vive ahí; este bloque viejo (NewsData directo con caché en memoria) se reemplazó.
 const noticiasSvc = require('./services/noticias').crearNoticias({ db, admin });
+const miembrosPublico = require('./services/miembros-publico').crearMiembrosPublico({ db }); miembrosPublico.montarRutas(app); // contador público de miembros (solo un número)
 noticiasSvc.montarRutas(app);
 // Tarea de noticias: al arrancar (1 min después) y luego cada 12 horas; solo si hay NEWSDATA_API_KEY
 if (NEWSDATA_API_KEY) {
