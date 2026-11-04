@@ -360,14 +360,15 @@ function crearServicio({
     const elegibles = filas.filter(f => f.elegible);
     const conteo = { elegibles: elegibles.length, porVerificar: filas.filter(f => f.motivo === 'correo-sin-verificar').length };
     for (const f of filas) { conteo[f.etapa] = (conteo[f.etapa] || 0) + 1; }
-    const proximos = elegibles.filter(f => f.siguiente).sort((a, b) => a.siguiente.saleMs - b.siguiente.saleMs).slice(0, 25)
-      .map(f => ({ uid: f.uid, nombre: f.nombre, correo: f.correo, ciclo: f.siguiente.ciclo, paso: f.siguiente.paso, monto: f.siguiente.monto, saleMs: f.siguiente.saleMs }));
+    const proximos = elegibles.filter(f => f.siguiente).sort((a, b) => a.siguiente.saleMs - b.siguiente.saleMs).slice(0, 1000)
+      .map(f => ({ uid: f.uid, nombre: f.nombre, correo: f.correo, registroMs: f.registroMs || 0, ciclo: f.siguiente.ciclo, paso: f.siguiente.paso, monto: f.siguiente.monto, saleMs: f.siguiente.saleMs, debeSalirMs: f.siguiente.debeSalirMs }));
     // Lo que ya le tocaba sale en la próxima revisión (dentro del horario): esa es la hora real del primer envío
     const efectivo = (saleMs, ahora) => (saleMs > ahora ? saleMs : R.ajustarAHorario(ahora));
-    const recientes = filas.filter(f => f.estado.ultimoEnvioMs > 0).sort((a, b) => b.estado.ultimoEnvioMs - a.estado.ultimoEnvioMs).slice(0, 10)
-      .map(f => ({ uid: f.uid, nombre: f.nombre, correo: f.correo, ciclo: f.estado.ciclo, paso: f.estado.paso, monto: R.montoDelPaso(f.estado.paso), enviadoMs: f.estado.ultimoEnvioMs }));
+    const recientes = filas.filter(f => f.estado.ultimoEnvioMs > 0).sort((a, b) => b.estado.ultimoEnvioMs - a.estado.ultimoEnvioMs).slice(0, 20)
+      .map(f => ({ uid: f.uid, nombre: f.nombre, correo: f.correo, registroMs: f.registroMs || 0, ciclo: f.estado.ciclo, paso: f.estado.paso, monto: R.montoDelPaso(f.estado.paso), enviadoMs: f.estado.ultimoEnvioMs }));
+    const precioMes = await leerPrecioMes().catch(() => R.CONFIG.precioMesMXN);
     return {
-      ahoraMs, modo: cfg.modo, topeDiario: cfg.topeDiario, maxPorCorrida: cfg.maxPorCorrida, enviadosHoy: hoy, faltanHoy: Math.max(0, cfg.topeDiario - hoy), cupoCorrida: cupo,
+      ahoraMs, precioMes, modo: cfg.modo, topeDiario: cfg.topeDiario, maxPorCorrida: cfg.maxPorCorrida, enviadosHoy: hoy, faltanHoy: Math.max(0, cfg.topeDiario - hoy), cupoCorrida: cupo,
       dentroDeHorario: R.dentroDeHorario(ahoraMs), calificarian: elegibles.length,
       primerEnvioMs: proximos.length ? efectivo(proximos[0].saleMs, ahoraMs) : 0, proximos, recientes, conteo,
       listasAhora: elegibles.filter(f => f.siguiente && f.siguiente.debeSalirMs <= ahoraMs).length,
