@@ -5,6 +5,8 @@
 //  Administrador:  GET    /api/admin/webinars-enlaces                     → { webinars: [{ id, link, recordingUrl }] }
 //                  POST   /api/admin/webinars-enlaces                     { id, titulo?, link?, recordingUrl? }
 //                  DELETE /api/admin/webinars-enlaces/:id
+//  Inscripción:    GET    /api/webinars/registros                         → { ids: [...] }  (clases a las que me inscribí)
+//                  POST   /api/webinars/:id/registro  { registrado }       → { registrado }  (402 sin membresía; el aviso de «empieza en 1 hora» se calcula en el Club)
 const { esAdminPorToken } = require('./certificados');
 
 const COL = 'webinarsPrivados';
@@ -48,6 +50,22 @@ function montarRutasWebinars(app, deps) {
     const url = tipo === 'grabacion' ? w.recordingUrl : w.link;
     if (!url) throw errorHttp(404, tipo === 'grabacion' ? 'Esta sesión todavía no tiene grabación.' : 'El enlace de esta sesión aún no está listo.');
     res.json({ url });
+  }));
+
+  // Inscripción a una clase: solo con membresía vigente. Se guarda en members/{uid}/clases_vivo/{id}.
+  app.get('/api/webinars/registros', envolver('registros', false, async (req, res, d) => {
+    const sn = await db.collection('members').doc(d.uid).collection('clases_vivo').limit(300).get();
+    res.json({ ok: true, ids: sn.docs.map(x => x.id) });
+  }));
+  app.post('/api/webinars/:id/registro', envolver('registro', false, async (req, res, d) => {
+    const id = idValido(req.params.id), quiere = !(req.body && req.body.registrado === false);
+    if (!esAdminPorToken(d)) {
+      const m = await db.collection('members').doc(d.uid).get();
+      if (!deps.tieneMembresia(m.exists ? (m.data() || {}) : {})) throw errorHttp(402, 'Inscribirte a las clases en vivo es parte de la membresía.');
+    }
+    const ref = db.collection('members').doc(d.uid).collection('clases_vivo').doc(id);
+    if (quiere) await ref.set({ en: new Date().toISOString() }); else await ref.delete();
+    res.json({ ok: true, registrado: quiere });
   }));
 
   app.get('/api/admin/webinars-enlaces', envolver('admin-lista', true, async (req, res) => {
