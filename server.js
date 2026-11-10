@@ -199,6 +199,9 @@ const PORT = process.env.PORT || 3000;
 
 // IMPORTANT: Stripe webhook needs raw body BEFORE json parser
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
+// Clases en vivo automáticas (Zoom → Bunny). El aviso de Zoom lleva firma sobre el cuerpo exacto: va antes de express.json()
+const clasesAuto = require('./services/clases-auto').crearClasesAuto({ db, admin });
+clasesAuto.montarWebhook(app);
 
 // JSON parser for all other routes
 app.use(express.json());
@@ -1309,6 +1312,8 @@ require('./services/avisos-config').montarRutasAvisosConfig(app, { db, admin });
 require('./services/foro-admin').montarRutasForoAdmin(app, { db, admin }); // moderación del foro y temas oficiales del equipo
 require('./services/soporte').montarRutasSoporte(app, { db, admin }); // quejas, sugerencias y problemas de los miembros hacia el panel del administrador
 require('./services/avisos').montarRutasAvisos(app, { db, admin, tieneMembresia: memberHasPremiumAccess }); // avisos personales de la campana (respuestas del foro)
+clasesAuto.montarRutas(app); // crear la reunión de Zoom con grabación y ver el estado de cada grabación (solo administradores)
+depsAcceso.clasesAuto = clasesAuto;
 require('./services/webinars').montarRutasWebinars(app, depsAcceso); // clases en vivo: enlace y grabación solo para miembros (nunca en content.json)
 require('./services/libros').montarRutasLibros(app, depsAcceso); // libros de lectura que se abren con retos
 depsAcceso.sembrarLibros().catch(e => console.warn('Libros base (siembra):', e.message));

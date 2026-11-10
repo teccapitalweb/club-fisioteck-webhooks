@@ -9,6 +9,7 @@
 //                  GET    /api/admin/clases-prueba                        → { clases: [...] }
 //                  POST   /api/admin/clases-prueba                        { id?, title, date, time, duration, ... }
 //                  DELETE /api/admin/clases-prueba/:id
+//  Grabaciones:    GET    /api/webinars/grabaciones                       → { ids: [...] }  (clases con grabación lista; la automática viene de services/clases-auto.js)
 //  Inscripción:    GET    /api/webinars/registros                         → { ids: [...] }  (clases a las que me inscribí)
 //                  POST   /api/webinars/:id/registro  { registrado }       → { registrado }  (402 sin membresía; el aviso de «empieza en 1 hora» se calcula en el Club)
 const { esAdminPorToken } = require('./certificados');
@@ -50,7 +51,17 @@ function montarRutasWebinars(app, deps) {
       const m = await db.collection('members').doc(d.uid).get();
       if (!deps.tieneMembresia(m.exists ? (m.data() || {}) : {})) throw errorHttp(402, 'Las clases en vivo son parte de la membresía.');
     }
-    const s = await db.collection(COL).doc(id).get(), w = s.exists ? (s.data() || {}) : {};
+    const esPrueba = /^prueba-/.test(id);
+    if (esPrueba && !esAdminPorToken(d)) throw errorHttp(404, 'Esta sesión no existe.');
+    const leer = async () => { const s = await db.collection(esPrueba ? 'clasesPrueba' : COL).doc(id).get(); return s.exists ? (s.data() || {}) : {}; };
+    let w = await leer();
+    // La grabación automática (Zoom → Bunny) puede estar terminando de procesarse: se revisa y se vuelve a leer
+    if (tipo === 'grabacion' && !w.grabacionVideoId && !w.recordingUrl && deps.clasesAuto) { await deps.clasesAuto.refrescarPendientes(); w = await leer(); }
+    if (tipo === 'grabacion' && w.grabacionVideoId && deps.clasesAuto) {
+      const embed = deps.clasesAuto.firmarEmbed(w.grabacionVideoId);
+      if (!embed) throw errorHttp(503, 'La reproducción de grabaciones aún no está configurada.');
+      return res.json({ url: embed, embed: true });
+    }
     const url = tipo === 'grabacion' ? w.recordingUrl : w.link;
     if (!url) throw errorHttp(404, tipo === 'grabacion' ? 'Esta sesión todavía no tiene grabación.' : 'El enlace de esta sesión aún no está listo.');
     res.json({ url });
@@ -91,6 +102,21 @@ function montarRutasWebinars(app, deps) {
     res.json({ ok: true });
   }));
 
+  // Qué clases ya tienen grabación disponible (Drive o automática), para marcar las tarjetas sin tener que republicar el contenido.
+  app.get('/api/webinars/grabaciones', envolver('grabaciones', false, async (req, res, d) => {
+    const admin = esAdminPorToken(d);
+    if (!admin) {
+      const m = await db.collection('members').doc(d.uid).get();
+      if (!deps.tieneMembresia(m.exists ? (m.data() || {}) : {})) return res.json({ ok: true, ids: [] });
+    }
+    if (deps.clasesAuto) await deps.clasesAuto.refrescarPendientes();
+    const ids = [];
+    const reales = await db.collection(COL).limit(500).get();
+    reales.docs.forEach(x => { const v = x.data() || {}; if (v.recordingUrl || v.grabacionVideoId) ids.push(x.id); });
+    if (admin) { const pr = await db.collection('clasesPrueba').limit(100).get(); pr.docs.forEach(x => { const v = x.data() || {}; if (v.recordingUrl || v.grabacionVideoId) ids.push(x.id); }); }
+    res.json({ ok: true, ids });
+  }));
+
   // Inscripción a una clase: solo con membresía vigente. Se guarda en members/{uid}/clases_vivo/{id}.
   app.get('/api/webinars/registros', envolver('registros', false, async (req, res, d) => {
     const sn = await db.collection('members').doc(d.uid).collection('clases_vivo').limit(300).get();
@@ -114,8 +140,9 @@ function montarRutasWebinars(app, deps) {
   app.post('/api/admin/webinars-enlaces', envolver('admin-guardar', true, async (req, res, d) => {
     const b = req.body || {}, id = idValido(b.id);
     const link = urlOpcional(b.link, 'enlace de la sesión'), recordingUrl = urlOpcional(b.recordingUrl, 'enlace de la grabación');
-    if (!link && !recordingUrl) { await db.collection(COL).doc(id).delete(); return res.json({ ok: true, borrado: true }); }
-    await db.collection(COL).doc(id).set({ link, recordingUrl, titulo: String(b.titulo || '').slice(0, 200), por: String(d.email || ''), en: new Date().toISOString() });
+    const previo = await db.collection(COL).doc(id).get(), grabacionVideoId = previo.exists ? String((previo.data() || {}).grabacionVideoId || '') : '';
+    if (!link && !recordingUrl && !grabacionVideoId) { await db.collection(COL).doc(id).delete(); return res.json({ ok: true, borrado: true }); }
+    await db.collection(COL).doc(id).set({ link, recordingUrl, ...(grabacionVideoId ? { grabacionVideoId } : {}), titulo: String(b.titulo || '').slice(0, 200), por: String(d.email || ''), en: new Date().toISOString() });
     res.json({ ok: true });
   }));
   app.delete('/api/admin/webinars-enlaces/:id', envolver('admin-borrar', true, async (req, res) => {
