@@ -60,6 +60,7 @@ async function levantar(cfg = {}, env = {}) {
     if (u === 'https://meet.googleapis.com/v2/spaces' && opts.method === 'POST') return resp(200, { name: 'spaces/abcDEF123xyz', meetingUri: 'https://meet.google.com/abc-defg-hij', meetingCode: 'abc-defg-hij' });
     if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords?')) return resp(200, { conferenceRecords: cfg.conferencias === undefined ? [{ name: 'conferenceRecords/c1' }] : cfg.conferencias });
     if (u.endsWith('/conferenceRecords/c1/recordings')) return resp(200, { recordings: cfg.grabaciones || [] });
+    if (u.startsWith('https://www.googleapis.com/drive/v3/files?')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(200, { files: cfg.archivosDrive || [] }); }
     if (u.includes('/drive/v3/files/') && u.includes('fields=')) return cfg.driveError ? resp(403, { error: { message: 'The user does not have sufficient permissions for this file.' } }) : resp(200, { size: String(CONTENIDO.length), name: 'clase.mp4', mimeType: 'video/mp4' });
     if (u.includes('/drive/v3/files/') && u.includes('alt=media')) return { status: 200, ok: true, body: new Response(CONTENIDO).body, json: async () => ({}) };
     if (u.endsWith('/videos') && opts.method === 'POST') return resp(200, { guid: VIDEO });
@@ -153,4 +154,70 @@ test('meet: sin grabación todavía se sigue esperando; si Google falla queda el
     await new Promise(r => setTimeout(r, 100)); // el reintento arranca la búsqueda en segundo plano (vuelve a fallar con el mismo permiso)
     assert.equal(s2.db.datos.get('clasesAuto/meet-abcDEF123xyz').estado, 'error');
   } finally { s2.cerrar(); }
+});
+
+// ---------- Meet con una cuenta de Gmail (sin Workspace): se vigila el Drive ----------
+const ENLACE = 'https://meet.google.com/abc-defg-hij';
+const ARCH = (id, nombre, creado, size = '5000') => ({ id, name: nombre, size, createdTime: creado });
+
+test('drive: el administrador registra la clase con su enlace de Meet; se valida el enlace y que la cuenta de Google esté conectada', async () => {
+  const s = await levantar();
+  try {
+    assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'ana')).status, 403);
+    assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: 'https://zoom.us/j/123' }, 'jefa')).status, 400, 'tiene que ser un enlace de Meet');
+    assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: '' }, 'jefa')).status, 400);
+    const r = await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE + '?authuser=0' }, 'jefa');
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.meetingId, 'drive-prueba-1');
+    const doc = s.db.datos.get('clasesAuto/drive-prueba-1');
+    assert.equal(doc.proveedor, 'drive'); assert.equal(doc.codigo, 'abc-defg-hij'); assert.equal(doc.claseId, 'prueba-1'); assert.equal(doc.estado, 'esperando');
+    assert.equal(s.llamadas.filter(l => l.url.includes('meet.googleapis.com')).length, 0, 'no usa la API de Meet: solo el Drive');
+  } finally { s.cerrar(); }
+  const s2 = await levantar({}, { GOOGLE_REFRESH_TOKEN: '' });
+  try { assert.equal((await s2.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa')).status, 503); } finally { s2.cerrar(); }
+});
+
+test('drive: encuentra el MP4 de la clase por el código del enlace, lo pasa a Bunny en flujo y queda enlazado; ignora lo de otras reuniones', async () => {
+  const cfg = { archivosDrive: [
+    ARCH('otra-reunion', 'xyz-qwer-tyu (2026-12-01 17:00 GMT-6) - Recording.mp4', '2026-12-01T23:30:00Z'),
+    ARCH('la-nuestra', 'abc-defg-hij (2026-12-01 17:02 GMT-6) - Recording.mp4', '2026-12-02T00:20:00Z'),
+    ARCH('vacio', 'abc-defg-hij (2026-12-01 17:02 GMT-6) - Recording.mp4', '2026-12-02T00:21:00Z', '0'),
+    ARCH('de-la-semana-siguiente', 'abc-defg-hij (2026-12-09 17:00 GMT-6) - Recording.mp4', '2026-12-09T23:30:00Z')] };
+  const s = await levantar(cfg);
+  try {
+    await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa');
+    s.reloj.t = Date.parse('2026-12-01T22:00:00Z'); await s.ca.revisarMeet();
+    assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').estado, 'esperando'); assert.equal((cfg.consultasDrive || []).length, 0, 'antes de la hora no se consulta el Drive');
+    s.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s.ca.revisarMeet();
+    const consulta = cfg.consultasDrive[0];
+    assert.ok(consulta.includes("mimeType = 'video/mp4'") && consulta.includes("'me' in owners") && consulta.includes("createdTime >= '2026-12-01T22:30:00.000Z'"), 'busca MP4 propios creados desde 30 min antes de la clase');
+    const e = s.db.datos.get('clasesAuto/drive-prueba-1');
+    assert.equal(e.estado, 'subiendo'); assert.equal(e.archivoDrive, 'la-nuestra'); assert.equal(e.videoId, VIDEO);
+    assert.ok(s.bunny.recibido.put.cuerpo.equals(CONTENIDO));
+    await s.ca.refrescarPendientes();
+    assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').estado, 'lista'); assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, VIDEO);
+  } finally { s.cerrar(); }
+});
+
+test('drive: sin código en el nombre usa el único video del horario; si hay varios no adivina y lo deja a la vista; sin video espera y a las 48 h avisa', async () => {
+  const s1 = await levantar({ archivosDrive: [ARCH('unico', 'Reunión sin título (2026-12-01 17:00 GMT-6).mp4', '2026-12-02T00:20:00Z')] });
+  try {
+    await s1.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa');
+    s1.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s1.ca.revisarMeet();
+    assert.equal(s1.db.datos.get('clasesAuto/drive-prueba-1').archivoDrive, 'unico');
+  } finally { s1.cerrar(); }
+  const s2 = await levantar({ archivosDrive: [ARCH('a', 'una cosa.mp4', '2026-12-02T00:10:00Z'), ARCH('b', 'otra cosa.mp4', '2026-12-02T00:20:00Z')] });
+  try {
+    await s2.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa');
+    s2.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s2.ca.revisarMeet();
+    const e = s2.db.datos.get('clasesAuto/drive-prueba-1'); assert.equal(e.estado, 'error'); assert.match(e.error, /Hay 2 grabaciones/);
+    assert.equal(s2.bunny.recibido.put, null, 'no se sube nada si hay duda');
+  } finally { s2.cerrar(); }
+  const s3 = await levantar({ archivosDrive: [] });
+  try {
+    await s3.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa');
+    s3.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s3.ca.revisarMeet();
+    assert.equal(s3.db.datos.get('clasesAuto/drive-prueba-1').estado, 'esperando');
+    s3.reloj.t = Date.parse('2026-12-04T01:00:00Z'); await s3.ca.revisarMeet();
+    const e = s3.db.datos.get('clasesAuto/drive-prueba-1'); assert.equal(e.estado, 'error'); assert.match(e.error, /no apareció ninguna grabación nueva en el Drive/);
+  } finally { s3.cerrar(); }
 });

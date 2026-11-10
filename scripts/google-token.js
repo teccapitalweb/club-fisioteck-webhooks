@@ -8,13 +8,17 @@
 //      (en PowerShell:  $env:GOOGLE_CLIENT_ID='...'; $env:GOOGLE_CLIENT_SECRET='...'; node scripts/google-token.js)
 //   3) Abre el enlace que aparece, entra con la cuenta organizadora y acepta los permisos.
 //   4) Copia el valor que imprime el script en la variable GOOGLE_REFRESH_TOKEN de Railway.
+//
+// Con una cuenta de GMAIL (sin Google Workspace) agrega --drive: solo pide leer el Drive para recoger las grabaciones que tú haces en Meet.
+//      GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node scripts/google-token.js --drive
 // El script no guarda nada en disco. Trata el refresh token como una contraseña: no lo pegues en el código ni en el chat.
 const http = require('http');
 const crypto = require('crypto');
 
 const ID = process.env.GOOGLE_CLIENT_ID, SECRETO = process.env.GOOGLE_CLIENT_SECRET;
 if (!ID || !SECRETO) { console.error('Faltan GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en el entorno (ver las instrucciones al inicio de este archivo).'); process.exit(1); }
-const SCOPES = [
+const SOLO_DRIVE = process.argv.includes('--drive');
+const SCOPES = SOLO_DRIVE ? ['https://www.googleapis.com/auth/drive.readonly'] : [
   'https://www.googleapis.com/auth/meetings.space.created',   // crear reuniones y ver lo que se creó con esta app
   'https://www.googleapis.com/auth/meetings.space.settings',  // activar la grabación automática del espacio
   'https://www.googleapis.com/auth/drive.readonly'            // descargar la grabación que Meet deja en el Drive de la cuenta organizadora

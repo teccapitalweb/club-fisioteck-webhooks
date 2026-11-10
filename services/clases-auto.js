@@ -21,6 +21,9 @@
 //   3) La descarga de Drive y la sube a Bunny sin guardarla en disco (en flujo continuo); después sigue igual que con Zoom.
 //   Variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN (de la cuenta de Google Workspace que organiza y graba; se obtienen una vez con
 //   scripts/google-token.js). Scopes: meetings.space.created, meetings.space.settings y drive.readonly.
+//  MEET CON UNA CUENTA DE GMAIL (sin Workspace, sin API de Meet): el administrador crea y graba la reunión a mano (la grabación queda en el Drive de la cuenta)
+//   y el servidor VIGILA ese Drive: POST /api/admin/clases-auto/drive registra la clase con su enlace de Meet; pasada la hora, busca un MP4 nuevo del Drive
+//   (por el código del enlace en el nombre, o el único del horario) y lo pasa a Bunny igual que con Meet. Solo necesita el permiso drive.readonly.
 //  Administrador:  POST /api/admin/clases-auto/zoom                  { id, title, date, time, duration } → { joinUrl, startUrl, meetingId }
 //                  GET  /api/admin/clases-auto                       → { entradas: [...] } (estado de cada grabación; refresca las pendientes)
 //                  POST /api/admin/clases-auto/:meetingId/reintentar → vuelve a pedir la grabación a Zoom y a subirla a Bunny
@@ -182,6 +185,21 @@ function crearClasesAuto(deps) {
     return mejor;
   }
 
+  // MEET CON GMAIL: busca en el Drive de la cuenta conectada el MP4 de la clase (null si todavía no aparece)
+  const codigoMeet = v => { const m = String(v || '').match(/meet\.google\.com\/(?:lookup\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})/i); return m ? m[1].toLowerCase() : ''; };
+  async function buscarGrabacionDrive(e) {
+    const desde = new Date((e.inicioMs || 0) - 30 * 60000).toISOString();
+    const q = "mimeType = 'video/mp4' and trashed = false and 'me' in owners and createdTime >= '" + desde + "'";
+    const r = await google(DRIVE_API + '/files?q=' + encodeURIComponent(q) + '&orderBy=' + encodeURIComponent('createdTime desc') + '&pageSize=30&fields=' + encodeURIComponent('files(id,name,size,createdTime)') + '&supportsAllDrives=true&includeItemsFromAllDrives=true');
+    const hasta = (e.finMs || 0) + 6 * 3600000;
+    const candidatos = (r.files || []).filter(x => Number(x.size) > 0 && Date.parse(x.createdTime || '') <= hasta);
+    const porCodigo = e.codigo ? candidatos.filter(x => String(x.name || '').toLowerCase().includes(e.codigo)) : [];
+    const pool = porCodigo.length ? porCodigo : candidatos;
+    if (!pool.length) return null;
+    if (pool.length > 1) { const err = errorHttp(409, 'Hay ' + pool.length + ' grabaciones en ese horario y no se sabe cuál es la de esta clase. Agrega la correcta a mano (enlace de la grabación en la clase) y marca esta como resuelta.'); err.definitivo = true; throw err; }
+    return { fileId: pool[0].id, nombre: pool[0].name, dur: 0 };
+  }
+
   // Sube a Bunny un archivo en flujo continuo (PUT con Content-Length): no se guarda en el disco del servidor
   function subirFlujoABunny(videoId, tam, flujo) {
     return new Promise((resolve, reject) => {
@@ -219,14 +237,14 @@ function crearClasesAuto(deps) {
       const sn = await db.collection(COL).limit(100).get();
       for (const d of sn.docs) {
         const e = d.data() || {};
-        if (e.proveedor !== 'meet' || e.estado !== 'esperando' || ahora() < (e.inicioMs || 0)) continue;
+        if ((e.proveedor !== 'meet' && e.proveedor !== 'drive') || e.estado !== 'esperando' || ahora() < (e.inicioMs || 0)) continue;
         try {
-          const grab = await buscarGrabacionMeet(e.spaceName);
-          if (!grab) { if (ahora() > (e.finMs || 0) + ESPERA_MAX_MS) await marcar(d.id, { estado: 'error', error: 'Pasaron 48 horas y Meet no generó ninguna grabación. Revisa que la cuenta organizadora tenga la grabación habilitada y que alguien con permiso haya entrado a la reunión.' }); continue; }
+          const grab = e.proveedor === 'drive' ? await buscarGrabacionDrive(e) : await buscarGrabacionMeet(e.spaceName);
+          if (!grab) { if (ahora() > (e.finMs || 0) + ESPERA_MAX_MS) await marcar(d.id, { estado: 'error', error: e.proveedor === 'drive' ? 'Pasaron 48 horas y no apareció ninguna grabación nueva en el Drive. Revisa que hayas pulsado Grabar en Meet y que el video aparezca en el Drive de la cuenta conectada.' : 'Pasaron 48 horas y Meet no generó ninguna grabación. Revisa que la cuenta organizadora tenga la grabación habilitada y que alguien con permiso haya entrado a la reunión.' }); continue; }
           await marcar(d.id, { estado: 'descargando', error: '' });
           try { await transferirDriveABunny(d.id, e, grab); }
           catch (err) { await marcar(d.id, { estado: 'error', error: texto(err.message, 300) }); }
-        } catch (err) { await marcar(d.id, { error: texto(err.message, 300) }); } // se vuelve a intentar en la próxima revisión
+        } catch (err) { await marcar(d.id, err.definitivo ? { estado: 'error', error: texto(err.message, 300) } : { error: texto(err.message, 300) }); } // se vuelve a intentar en la próxima revisión
       }
     } finally { revisando = false; }
   }
@@ -308,6 +326,18 @@ function crearClasesAuto(deps) {
       res.json({ ok: true, meetingId: id, joinUrl: sp.meetingUri, startUrl: '' });
     }));
 
+    app.post('/api/admin/clases-auto/drive', envolver('drive', async (req, res, d) => {
+      const b = req.body || {}, claseId = idClase(b.id), date = texto(b.date, 10), time = texto(b.time, 5), titulo = texto(b.title, 160), enlace = texto(b.link, 500);
+      if (!titulo) throw errorHttp(400, 'El título es obligatorio.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw errorHttp(400, 'Escribe la fecha y la hora de la clase.');
+      const codigo = codigoMeet(enlace);
+      if (!codigo) throw errorHttp(400, 'Pega el enlace de la reunión de Google Meet (por ejemplo https://meet.google.com/abc-defg-hij).');
+      if (!meetListo()) throw errorHttp(503, 'Falta conectar la cuenta de Google en el servidor (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y GOOGLE_REFRESH_TOKEN).');
+      const duracion = Math.max(15, Math.min(480, Math.round(Number(b.duration)) || 60)), inicioMs = Date.parse(date + 'T' + time + ':00-06:00') || 0, id = 'drive-' + claseId;
+      await db.collection(COL).doc(id).set({ proveedor: 'drive', meetingId: id, codigo, claseId, titulo, fecha: date + ' ' + time, inicioMs, finMs: inicioMs + duracion * 60000, estado: 'esperando', error: '', creado: new Date(ahora()).toISOString(), por: texto(d.email, 200) });
+      res.json({ ok: true, meetingId: id, joinUrl: enlace, startUrl: '' });
+    }));
+
     app.get('/api/admin/clases-auto', envolver('lista', async (req, res) => {
       await refrescarPendientes();
       const sn = await db.collection(COL).limit(100).get();
@@ -318,7 +348,7 @@ function crearClasesAuto(deps) {
     app.post('/api/admin/clases-auto/:id/reintentar', envolver('reintentar', async (req, res) => {
       const id = idReunion(req.params.id), s = await db.collection(COL).doc(id).get();
       if (!s.exists) throw errorHttp(404, 'No encontramos esa reunión.');
-      if ((s.data() || {}).proveedor === 'meet') { await marcar(id, { estado: 'esperando', error: '', inicioMs: 0 }); revisarMeet().catch(() => {}); return res.json({ ok: true }); } // se vuelve a buscar en la próxima revisión
+      if (['meet', 'drive'].includes((s.data() || {}).proveedor)) { await marcar(id, { estado: 'esperando', error: '', inicioMs: 0 }); revisarMeet().catch(() => {}); return res.json({ ok: true }); } // se vuelve a buscar en la próxima revisión
       const r = await zoom('/meetings/' + encodeURIComponent(id) + '/recordings', { method: 'GET' });
       const archivo = elegirArchivo(r.recording_files);
       if (!archivo) throw errorHttp(404, 'Zoom todavía no tiene una grabación MP4 de esta reunión.');
