@@ -270,7 +270,7 @@ function crearClasesAuto(deps) {
         try {
           const grab = e.proveedor === 'drive' ? await buscarGrabacionDrive(e) : await buscarGrabacionMeet(e.spaceName);
           if (!grab) { if (ahora() > (e.finMs || 0) + ESPERA_MAX_MS) await marcar(d.id, { estado: 'error', error: e.proveedor === 'drive' ? 'Pasaron 48 horas y no apareció ninguna grabación nueva en el Drive. Revisa que hayas pulsado Grabar en Meet y que el video aparezca en el Drive de la cuenta conectada.' : 'Pasaron 48 horas y Meet no generó ninguna grabación. Revisa que la cuenta organizadora tenga la grabación habilitada y que alguien con permiso haya entrado a la reunión.' }); continue; }
-          await marcar(d.id, { estado: 'descargando', error: '' });
+          await marcar(d.id, { estado: 'descargando', error: '', archivoNombre: texto(grab.nombre, 200), encontrado: new Date(ahora()).toISOString() });
           try { await transferirDriveABunny(d.id, e, grab); }
           catch (err) { await marcar(d.id, { estado: 'error', error: texto(err.message, 300) }); }
         } catch (err) { await marcar(d.id, err.definitivo ? { estado: 'error', error: texto(err.message, 300) } : { error: texto(err.message, 300) }); } // se vuelve a intentar en la próxima revisión
