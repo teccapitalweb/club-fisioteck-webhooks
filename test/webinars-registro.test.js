@@ -64,3 +64,45 @@ test('clases en vivo: sin membresía no se inscribe; sin sesión o con un id rar
     assert.equal(s.db.datos.has('members/gratis/clases_vivo/55'), false);
   } finally { s.cerrar(); }
 });
+
+// ---------- Clases de prueba (solo administradores) ----------
+test('clases de prueba: solo un administrador las crea, lista y borra; un miembro recibe 403', async () => {
+  process.env.ADMIN_EMAILS = 'jefa@fisioteck.test';
+  tokens.jefa = { uid: 'jefa', email: 'jefa@fisioteck.test', email_verified: true };
+  const s = await levantar();
+  try {
+    const cuerpo = { title: 'Prueba de Meet', date: '2026-12-01', time: '18:00', duration: 45, link: 'https://meet.google.com/abc-defg-hij', instructor: 'Equipo' };
+    assert.equal((await s.llamar('/api/admin/clases-prueba', cuerpo, 'ana')).status, 403, 'un miembro no puede crear pruebas');
+    assert.equal((await s.llamar('/api/admin/clases-prueba', null, 'ana')).status, 403, 'ni verlas');
+    const creada = await s.llamar('/api/admin/clases-prueba', cuerpo, 'jefa');
+    assert.equal(creada.status, 200); assert.match(creada.cuerpo.clase.id, /^prueba-/); assert.equal(creada.cuerpo.clase.prueba, true); assert.equal(creada.cuerpo.clase.tieneEnlace, true); assert.equal(creada.cuerpo.clase.duration, 45);
+    const id = creada.cuerpo.clase.id;
+    // editar la misma clase conserva el id
+    const edit = await s.llamar('/api/admin/clases-prueba', { ...cuerpo, id, title: 'Prueba editada', duration: 5000 }, 'jefa');
+    assert.equal(edit.cuerpo.clase.id, id); assert.equal(edit.cuerpo.clase.duration, 480, 'la duración se limita a 480');
+    const lista = (await s.llamar('/api/admin/clases-prueba', null, 'jefa')).cuerpo.clases;
+    assert.equal(lista.length, 1); assert.equal(lista[0].title, 'Prueba editada');
+    // nunca se mezcla con las clases reales ni con la colección de enlaces de los miembros
+    assert.equal(s.db.datos.has('webinarsPrivados/' + id), false);
+    assert.equal((await s.llamar('/api/admin/clases-prueba/' + id, null, 'ana', 'DELETE')).status, 403);
+    assert.equal((await s.llamar('/api/admin/clases-prueba/' + id, null, 'jefa', 'DELETE')).status, 200);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', null, 'jefa')).cuerpo.clases.length, 0);
+  } finally { s.cerrar(); delete process.env.ADMIN_EMAILS; }
+});
+
+test('clases de prueba: se rechazan datos incompletos, enlaces raros y ids que no son de prueba', async () => {
+  process.env.ADMIN_EMAILS = 'jefa@fisioteck.test';
+  tokens.jefa = { uid: 'jefa', email: 'jefa@fisioteck.test', email_verified: true };
+  const s = await levantar();
+  try {
+    const ok = { title: 'X', date: '2026-12-01', time: '18:00' };
+    assert.equal((await s.llamar('/api/admin/clases-prueba', ok, 'jefa')).status, 200, 'con datos completos sí se guarda');
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...ok, title: '' }, 'jefa')).status, 400);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...ok, date: '1 de diciembre' }, 'jefa')).status, 400);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...ok, time: '6pm' }, 'jefa')).status, 400);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...ok, link: 'javascript:alert(1)' }, 'jefa')).status, 400);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...ok, id: '1730000000' }, 'jefa')).status, 400, 'no se puede pisar una clase real');
+    assert.equal((await s.llamar('/api/admin/clases-prueba/1730000000', null, 'jefa', 'DELETE')).status, 400);
+    assert.equal((await s.llamar('/api/admin/clases-prueba', ok, '')).status, 401);
+  } finally { s.cerrar(); delete process.env.ADMIN_EMAILS; }
+});

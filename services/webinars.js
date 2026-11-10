@@ -5,6 +5,10 @@
 //  Administrador:  GET    /api/admin/webinars-enlaces                     → { webinars: [{ id, link, recordingUrl }] }
 //                  POST   /api/admin/webinars-enlaces                     { id, titulo?, link?, recordingUrl? }
 //                  DELETE /api/admin/webinars-enlaces/:id
+//  Clases de PRUEBA (solo administradores; nunca van a content.json ni les llegan avisos a los miembros: el Club las muestra solo en «Ver como usuario»):
+//                  GET    /api/admin/clases-prueba                        → { clases: [...] }
+//                  POST   /api/admin/clases-prueba                        { id?, title, date, time, duration, ... }
+//                  DELETE /api/admin/clases-prueba/:id
 //  Inscripción:    GET    /api/webinars/registros                         → { ids: [...] }  (clases a las que me inscribí)
 //                  POST   /api/webinars/:id/registro  { registrado }       → { registrado }  (402 sin membresía; el aviso de «empieza en 1 hora» se calcula en el Club)
 const { esAdminPorToken } = require('./certificados');
@@ -50,6 +54,41 @@ function montarRutasWebinars(app, deps) {
     const url = tipo === 'grabacion' ? w.recordingUrl : w.link;
     if (!url) throw errorHttp(404, tipo === 'grabacion' ? 'Esta sesión todavía no tiene grabación.' : 'El enlace de esta sesión aún no está listo.');
     res.json({ url });
+  }));
+
+  // Clases de prueba: viven en clasesPrueba/{id}, solo las lee y escribe un administrador (con su enlace y grabación a la vista).
+  const PRUEBA = 'clasesPrueba';
+  const texto = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+  function limpiarPrueba(b, id) {
+    const date = texto(b.date, 10), time = texto(b.time, 5);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw errorHttp(400, 'Escribe la fecha de la clase.');
+    if (!/^\d{2}:\d{2}$/.test(time)) throw errorHttp(400, 'Escribe la hora de la clase.');
+    if (!texto(b.title, 160)) throw errorHttp(400, 'El título es obligatorio.');
+    return {
+      id, prueba: true, title: texto(b.title, 160), desc: texto(b.desc, 1000), category: texto(b.category, 60), date, time,
+      duration: Math.max(15, Math.min(480, Math.round(Number(b.duration)) || 60)), badge: texto(b.badge, 40),
+      instructor: texto(b.instructor, 120), instructorRole: texto(b.instructorRole, 120), thumbnail: texto(b.thumbnail, 500), instructorImg: texto(b.instructorImg, 500),
+      link: urlOpcional(b.link, 'enlace de la sesión'), recordingUrl: urlOpcional(b.recordingUrl, 'enlace de la grabación'),
+      tieneEnlace: !!urlOpcional(b.link, 'enlace de la sesión'), tieneGrabacion: !!urlOpcional(b.recordingUrl, 'enlace de la grabación')
+    };
+  }
+  app.get('/api/admin/clases-prueba', envolver('prueba-lista', true, async (req, res) => {
+    const sn = await db.collection(PRUEBA).limit(100).get();
+    res.json({ ok: true, clases: sn.docs.map(x => ({ ...(x.data() || {}), id: x.id })) });
+  }));
+  app.post('/api/admin/clases-prueba', envolver('prueba-guardar', true, async (req, res, d) => {
+    const b = req.body || {};
+    const id = b.id ? idValido(b.id) : 'prueba-' + Date.now();
+    if (!/^prueba-/.test(id)) throw errorHttp(400, 'Identificador de clase de prueba inválido.');
+    const doc = { ...limpiarPrueba(b, id), por: texto(d.email, 200), en: new Date().toISOString() };
+    await db.collection(PRUEBA).doc(id).set(doc);
+    res.json({ ok: true, clase: doc });
+  }));
+  app.delete('/api/admin/clases-prueba/:id', envolver('prueba-borrar', true, async (req, res) => {
+    const id = idValido(req.params.id);
+    if (!/^prueba-/.test(id)) throw errorHttp(400, 'Identificador de clase de prueba inválido.');
+    await db.collection(PRUEBA).doc(id).delete();
+    res.json({ ok: true });
   }));
 
   // Inscripción a una clase: solo con membresía vigente. Se guarda en members/{uid}/clases_vivo/{id}.
