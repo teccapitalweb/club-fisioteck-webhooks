@@ -1313,6 +1313,7 @@ require('./services/foro-admin').montarRutasForoAdmin(app, { db, admin }); // mo
 require('./services/soporte').montarRutasSoporte(app, { db, admin }); // quejas, sugerencias y problemas de los miembros hacia el panel del administrador
 require('./services/avisos').montarRutasAvisos(app, { db, admin, tieneMembresia: memberHasPremiumAccess }); // avisos personales de la campana (respuestas del foro)
 clasesAuto.montarRutas(app); // crear la reunión de Zoom con grabación y ver el estado de cada grabación (solo administradores)
+clasesAuto.iniciarRevision(); // cada 3 minutos: busca grabaciones nuevas de Meet y revisa lo que Bunny está procesando
 depsAcceso.clasesAuto = clasesAuto;
 require('./services/webinars').montarRutasWebinars(app, depsAcceso); // clases en vivo: enlace y grabación solo para miembros (nunca en content.json)
 require('./services/libros').montarRutasLibros(app, depsAcceso); // libros de lectura que se abren con retos

@@ -15,20 +15,31 @@
 //   ZOOM_WEBHOOK_SECRET_TOKEN                             «Secret Token» del evento recording.completed
 //   BUNNY_STREAM_LIBRARY_ID, BUNNY_STREAM_API_KEY, BUNNY_STREAM_TOKEN_KEY (+ BUNNY_STREAM_PLAYER_HOST, BUNNY_PLAYBACK_TTL_SECONDS)
 //
+//  GOOGLE MEET (misma idea, sin avisos de Zoom: el servidor revisa cada pocos minutos):
+//   1) POST /api/admin/clases-auto/meet crea un espacio de Meet con grabación automática (API de Meet) y guarda a qué clase pertenece.
+//   2) Cuando pasa la hora, el servidor busca en la API de Meet si ya hay una grabación generada (se guarda en el Drive de la cuenta organizadora).
+//   3) La descarga de Drive y la sube a Bunny sin guardarla en disco (en flujo continuo); después sigue igual que con Zoom.
+//   Variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN (de la cuenta de Google Workspace que organiza y graba; se obtienen una vez con
+//   scripts/google-token.js). Scopes: meetings.space.created, meetings.space.settings y drive.readonly.
 //  Administrador:  POST /api/admin/clases-auto/zoom                  { id, title, date, time, duration } → { joinUrl, startUrl, meetingId }
 //                  GET  /api/admin/clases-auto                       → { entradas: [...] } (estado de cada grabación; refresca las pendientes)
 //                  POST /api/admin/clases-auto/:meetingId/reintentar → vuelve a pedir la grabación a Zoom y a subirla a Bunny
 //  Zoom:           POST /api/zoom/webhook                            (firma HMAC; también responde la validación del endpoint)
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
+const { Readable } = require('stream');
 const express = require('express');
 const { esAdminPorToken } = require('./certificados');
 
 const COL = 'clasesAuto';
 const ZOOM_API = 'https://api.zoom.us/v2', ZOOM_OAUTH = 'https://zoom.us/oauth/token', BUNNY_API = 'https://video.bunnycdn.com';
+const MEET_API = 'https://meet.googleapis.com/v2', DRIVE_API = 'https://www.googleapis.com/drive/v3', GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
+const ESPERA_MAX_MS = 48 * 3600 * 1000; // si 48 h después de la clase no hay grabación, se avisa en el panel
 const hmac = (clave, texto) => crypto.createHmac('sha256', clave).update(texto).digest('hex');
 const errorHttp = (status, mensaje) => { const e = new Error(mensaje); e.status = status; return e; };
 const texto = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
-const idReunion = v => { const s = String(v == null ? '' : v).trim(); if (!/^\d{5,20}$/.test(s)) throw errorHttp(400, 'Identificador de reunión inválido.'); return s; };
+const idReunion = v => { const s = String(v == null ? '' : v).trim(); if (!/^[A-Za-z0-9_-]{5,60}$/.test(s)) throw errorHttp(400, 'Identificador de reunión inválido.'); return s; };
 const idClase = v => { const s = String(v == null ? '' : v).trim(); if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) throw errorHttp(400, 'Identificador de clase inválido.'); return s; };
 
 // Enlace de reproducción firmado de Bunny (mismo esquema que los videos de los cursos). null si Bunny no está configurado.
@@ -78,7 +89,7 @@ function crearClasesAuto(deps) {
   }
   async function bunny(ruta, opts) {
     if (!bunnyListo()) throw errorHttp(503, 'Falta configurar Bunny en el servidor (BUNNY_STREAM_LIBRARY_ID y BUNNY_STREAM_API_KEY).');
-    let r; try { r = await fetchFn(BUNNY_API + '/library/' + encodeURIComponent(env.BUNNY_STREAM_LIBRARY_ID) + ruta, { ...(opts || {}), headers: { AccessKey: env.BUNNY_STREAM_API_KEY, Accept: 'application/json', 'Content-Type': 'application/json' } }); }
+    let r; try { r = await fetchFn((env.BUNNY_API_BASE || BUNNY_API) + '/library/' + encodeURIComponent(env.BUNNY_STREAM_LIBRARY_ID) + ruta, { ...(opts || {}), headers: { AccessKey: env.BUNNY_STREAM_API_KEY, Accept: 'application/json', 'Content-Type': 'application/json' } }); }
     catch (_) { throw errorHttp(502, 'No pudimos conectar con Bunny.'); }
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 || r.status === 403) throw errorHttp(502, 'Bunny rechazó la API Key de la biblioteca.');
@@ -130,6 +141,100 @@ function crearClasesAuto(deps) {
     if ((entrada.estado === 'subiendo' || entrada.estado === 'lista') && entrada.archivoZoom === String(archivo.id || '')) return { repetido: true }; // Zoom reintenta los avisos
     try { await subirABunny(id, entrada, archivo, cuerpo.download_token || ''); return { ok: true }; }
     catch (e) { await marcar(id, { estado: 'error', error: texto(e.message, 300) }); return { error: true }; }
+  }
+
+  // ===== GOOGLE MEET =====
+  const meetListo = () => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN);
+  let tokenGoogle = { valor: '', hasta: 0 };
+  async function accesoGoogle(forzar) {
+    if (!meetListo()) throw errorHttp(503, 'Falta conectar la cuenta de Google en el servidor (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y GOOGLE_REFRESH_TOKEN).');
+    if (!forzar && tokenGoogle.valor && tokenGoogle.hasta > ahora() + 60000) return tokenGoogle.valor;
+    let r; try { r = await fetchFn(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: env.GOOGLE_REFRESH_TOKEN, grant_type: 'refresh_token' }).toString() }); }
+    catch (_) { throw errorHttp(502, 'No pudimos conectar con Google.'); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.access_token) throw errorHttp(502, 'Google rechazó la conexión de la cuenta (' + (j.error_description || j.error || r.status) + '). Hay que volver a conectarla con scripts/google-token.js.');
+    tokenGoogle = { valor: j.access_token, hasta: ahora() + (Number(j.expires_in) || 3600) * 1000 };
+    return tokenGoogle.valor;
+  }
+  async function google(url, opts, reintento, crudo) {
+    const token = await accesoGoogle(!!reintento);
+    let r; try { r = await fetchFn(url, { ...(opts || {}), headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }); }
+    catch (_) { throw errorHttp(502, 'No pudimos conectar con Google.'); }
+    if (r.status === 401 && !reintento) return google(url, opts, true, crudo);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw errorHttp(502, 'Google respondió con error ' + r.status + (j.error && j.error.message ? ': ' + j.error.message : '') + '.'); }
+    return crudo ? r : r.json().catch(() => ({}));
+  }
+  const idArchivoDrive = v => { const t = String(v || ''); const m = t.match(/\/d\/([A-Za-z0-9_-]+)/); return m ? m[1] : t.split('/').pop(); };
+
+  // Busca la mejor grabación ya generada de un espacio de Meet (null si todavía no hay)
+  async function buscarGrabacionMeet(spaceName) {
+    const filtro = encodeURIComponent('space.name = "' + spaceName + '"');
+    const cr = await google(MEET_API + '/conferenceRecords?filter=' + filtro);
+    let mejor = null;
+    for (const c of (cr.conferenceRecords || [])) {
+      const rs = await google(MEET_API + '/' + c.name + '/recordings');
+      for (const r of (rs.recordings || [])) {
+        if (r.state !== 'FILE_GENERATED' || !r.driveDestination || !r.driveDestination.file) continue;
+        const dur = Date.parse(r.endTime || '') - Date.parse(r.startTime || '') || 0;
+        if (!mejor || dur > mejor.dur) mejor = { fileId: idArchivoDrive(r.driveDestination.file), nombre: r.name, dur };
+      }
+    }
+    return mejor;
+  }
+
+  // Sube a Bunny un archivo en flujo continuo (PUT con Content-Length): no se guarda en el disco del servidor
+  function subirFlujoABunny(videoId, tam, flujo) {
+    return new Promise((resolve, reject) => {
+      const base = new URL((env.BUNNY_API_BASE || BUNNY_API) + '/library/' + encodeURIComponent(env.BUNNY_STREAM_LIBRARY_ID) + '/videos/' + encodeURIComponent(videoId));
+      const cliente = base.protocol === 'http:' ? http : https;
+      const req = cliente.request(base, { method: 'PUT', headers: { AccessKey: env.BUNNY_STREAM_API_KEY, 'Content-Type': 'application/octet-stream', 'Content-Length': String(tam) } }, resp => {
+        let cuerpo = ''; resp.on('data', d => { cuerpo += d; });
+        resp.on('end', () => (resp.statusCode >= 200 && resp.statusCode < 300) ? resolve() : reject(errorHttp(502, 'Bunny rechazó la subida del video (' + resp.statusCode + ').')));
+      });
+      req.on('error', () => reject(errorHttp(502, 'Se cortó la conexión con Bunny al subir el video.')));
+      flujo.on('error', () => { req.destroy(); reject(errorHttp(502, 'Se cortó la descarga desde Google Drive.')); });
+      flujo.pipe(req);
+    });
+  }
+
+  // Pasa la grabación de Drive a Bunny
+  async function transferirDriveABunny(id, entrada, grab) {
+    const meta = await google(DRIVE_API + '/files/' + encodeURIComponent(grab.fileId) + '?fields=size,name,mimeType&supportsAllDrives=true');
+    const tam = Number(meta.size) || 0;
+    if (!tam) throw errorHttp(502, 'Google Drive no informó el tamaño de la grabación.');
+    const v = await bunny('/videos', { method: 'POST', body: JSON.stringify({ title: texto((entrada.titulo || 'Clase en vivo') + ' · ' + (entrada.fecha || ''), 150) }) });
+    const videoId = String(v.guid || v.id || '').toLowerCase();
+    if (!videoId) throw errorHttp(502, 'Bunny no devolvió el id del video.');
+    const r = await google(DRIVE_API + '/files/' + encodeURIComponent(grab.fileId) + '?alt=media&supportsAllDrives=true', { method: 'GET' }, false, true);
+    await subirFlujoABunny(videoId, tam, Readable.fromWeb(r.body));
+    await marcar(id, { estado: 'subiendo', videoId, archivoDrive: grab.fileId, error: '' });
+    return videoId;
+  }
+
+  let revisando = false;
+  async function revisarMeet() {
+    if (revisando || !meetListo() || !bunnyListo()) return;
+    revisando = true;
+    try {
+      const sn = await db.collection(COL).limit(100).get();
+      for (const d of sn.docs) {
+        const e = d.data() || {};
+        if (e.proveedor !== 'meet' || e.estado !== 'esperando' || ahora() < (e.inicioMs || 0)) continue;
+        try {
+          const grab = await buscarGrabacionMeet(e.spaceName);
+          if (!grab) { if (ahora() > (e.finMs || 0) + ESPERA_MAX_MS) await marcar(d.id, { estado: 'error', error: 'Pasaron 48 horas y Meet no generó ninguna grabación. Revisa que la cuenta organizadora tenga la grabación habilitada y que alguien con permiso haya entrado a la reunión.' }); continue; }
+          await marcar(d.id, { estado: 'descargando', error: '' });
+          try { await transferirDriveABunny(d.id, e, grab); }
+          catch (err) { await marcar(d.id, { estado: 'error', error: texto(err.message, 300) }); }
+        } catch (err) { await marcar(d.id, { error: texto(err.message, 300) }); } // se vuelve a intentar en la próxima revisión
+      }
+    } finally { revisando = false; }
+  }
+  // Cada pocos minutos: busca grabaciones nuevas de Meet y revisa las que Bunny está procesando
+  function iniciarRevision(cadaMs) {
+    const t = setInterval(() => { revisarMeet().then(refrescarPendientes).catch(e => console.warn('[clases-auto revisión]', e && e.message)); }, cadaMs || 3 * 60 * 1000);
+    if (t.unref) t.unref();
+    return t;
   }
 
   function montarWebhook(app) {
@@ -190,16 +295,30 @@ function crearClasesAuto(deps) {
       res.json({ ok: true, meetingId, joinUrl: m.join_url, startUrl: m.start_url || '' });
     }));
 
+    app.post('/api/admin/clases-auto/meet', envolver('meet', async (req, res, d) => {
+      const b = req.body || {}, claseId = idClase(b.id), date = texto(b.date, 10), time = texto(b.time, 5), titulo = texto(b.title, 160);
+      if (!titulo) throw errorHttp(400, 'El título es obligatorio.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw errorHttp(400, 'Escribe la fecha y la hora de la clase.');
+      const duracion = Math.max(15, Math.min(480, Math.round(Number(b.duration)) || 60));
+      const sp = await google(MEET_API + '/spaces', { method: 'POST', body: JSON.stringify({ config: { accessType: 'OPEN', entryPointAccess: 'ALL', artifactConfig: { recordingConfig: { autoRecordingGeneration: 'ON' } } } }) });
+      const spaceName = String(sp.name || '');
+      if (!/^spaces\/[A-Za-z0-9_-]+$/.test(spaceName) || !sp.meetingUri) throw errorHttp(502, 'Google no devolvió la reunión de Meet.');
+      const inicioMs = Date.parse(date + 'T' + time + ':00-06:00') || 0, id = 'meet-' + spaceName.slice(7);
+      await db.collection(COL).doc(id).set({ proveedor: 'meet', meetingId: id, spaceName, claseId, titulo, fecha: date + ' ' + time, inicioMs, finMs: inicioMs + duracion * 60000, estado: 'esperando', error: '', creado: new Date(ahora()).toISOString(), por: texto(d.email, 200) });
+      res.json({ ok: true, meetingId: id, joinUrl: sp.meetingUri, startUrl: '' });
+    }));
+
     app.get('/api/admin/clases-auto', envolver('lista', async (req, res) => {
       await refrescarPendientes();
       const sn = await db.collection(COL).limit(100).get();
       const entradas = sn.docs.map(x => ({ ...(x.data() || {}), id: x.id })).sort((p, q) => String(q.creado || '').localeCompare(String(p.creado || '')));
-      res.json({ ok: true, entradas, zoomListo: zoomListo(), bunnyListo: bunnyListo() });
+      res.json({ ok: true, entradas, zoomListo: zoomListo(), meetListo: meetListo(), bunnyListo: bunnyListo() });
     }));
 
     app.post('/api/admin/clases-auto/:id/reintentar', envolver('reintentar', async (req, res) => {
       const id = idReunion(req.params.id), s = await db.collection(COL).doc(id).get();
       if (!s.exists) throw errorHttp(404, 'No encontramos esa reunión.');
+      if ((s.data() || {}).proveedor === 'meet') { await marcar(id, { estado: 'esperando', error: '', inicioMs: 0 }); revisarMeet().catch(() => {}); return res.json({ ok: true }); } // se vuelve a buscar en la próxima revisión
       const r = await zoom('/meetings/' + encodeURIComponent(id) + '/recordings', { method: 'GET' });
       const archivo = elegirArchivo(r.recording_files);
       if (!archivo) throw errorHttp(404, 'Zoom todavía no tiene una grabación MP4 de esta reunión.');
@@ -208,7 +327,7 @@ function crearClasesAuto(deps) {
     }));
   }
 
-  return { montarWebhook, montarRutas, refrescarPendientes, firmarEmbed: id => firmarEmbed(id, env, ahora()), procesarGrabacion };
+  return { montarWebhook, montarRutas, refrescarPendientes, revisarMeet, iniciarRevision, firmarEmbed: id => firmarEmbed(id, env, ahora()), procesarGrabacion };
 }
 
 module.exports = { crearClasesAuto, firmarEmbed, elegirArchivo };
