@@ -209,16 +209,24 @@ function crearClasesAuto(deps) {
   // MEET CON GMAIL: busca en el Drive de la cuenta conectada el MP4 de la clase (null si todavía no aparece)
   const codigoMeet = v => { const m = String(v || '').match(/meet\.google\.com\/(?:lookup\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})/i); return m ? m[1].toLowerCase() : ''; };
   async function buscarGrabacionDrive(e) {
-    const desde = new Date((e.inicioMs || 0) - 30 * 60000).toISOString();
-    const q = "mimeType = 'video/mp4' and trashed = false and 'me' in owners and createdTime >= '" + desde + "'";
-    const r = await google(DRIVE_API + '/files?q=' + encodeURIComponent(q) + '&orderBy=' + encodeURIComponent('createdTime desc') + '&pageSize=30&fields=' + encodeURIComponent('files(id,name,size,createdTime)') + '&supportsAllDrives=true&includeItemsFromAllDrives=true');
-    const hasta = (e.finMs || 0) + 6 * 3600000;
-    const candidatos = (r.files || []).filter(x => Number(x.size) > 0 && Date.parse(x.createdTime || '') <= hasta);
-    const porCodigo = e.codigo ? candidatos.filter(x => String(x.name || '').toLowerCase().includes(e.codigo)) : [];
-    const pool = porCodigo.length ? porCodigo : candidatos;
+    // Consulta sencilla (sin orden ni opciones de unidades compartidas): el filtro fino se hace aquí, para no depender de detalles del buscador de Drive
+    const desde = new Date((e.inicioMs || 0) - 30 * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const q = "mimeType = 'video/mp4' and trashed = false and createdTime >= '" + desde + "'";
+    let r;
+    try { r = await google(DRIVE_API + '/files?q=' + encodeURIComponent(q) + '&pageSize=50&fields=' + encodeURIComponent('files(id,name,size,createdTime,ownedByMe)')); }
+    catch (err) { throw errorHttp(502, 'Al buscar en el Drive: ' + err.message); }
+    const hasta = (e.finMs || 0) + 6 * 3600000, minus = t => String(t || '').toLowerCase();
+    const candidatos = (r.files || []).filter(x => x.ownedByMe !== false && Number(x.size) > 0 && Date.parse(x.createdTime || '') <= hasta);
+    // Meet nombra el video con el TÍTULO del evento (o con el código si la reunión no tiene título): se busca primero por código, luego por título
+    const porCodigo = e.codigo ? candidatos.filter(x => minus(x.name).includes(e.codigo)) : [];
+    const titulo = minus(e.titulo).trim(), porTitulo = titulo ? candidatos.filter(x => minus(x.name).includes(titulo)) : [];
+    const especificos = porCodigo.length ? porCodigo : porTitulo;
+    const pool = especificos.length ? especificos : candidatos;
     if (!pool.length) return null;
-    if (pool.length > 1) { const err = errorHttp(409, 'Hay ' + pool.length + ' grabaciones en ese horario y no se sabe cuál es la de esta clase. Agrega la correcta a mano (enlace de la grabación en la clase) y marca esta como resuelta.'); err.definitivo = true; throw err; }
-    return { fileId: pool[0].id, nombre: pool[0].name, dur: 0 };
+    // Con coincidencia por código o título se toma el video más grande (si la grabación se cortó en partes, la principal); sin coincidencia y con varios, no se adivina
+    if (pool.length > 1 && !especificos.length) { const err = errorHttp(409, 'Hay ' + pool.length + ' grabaciones en ese horario y no se sabe cuál es la de esta clase. Agrega la correcta a mano (enlace de la grabación en la clase) y marca esta como resuelta.'); err.definitivo = true; throw err; }
+    const elegido = pool.slice().sort((p, q2) => Number(q2.size) - Number(p.size))[0];
+    return { fileId: elegido.id, nombre: elegido.name, dur: 0 };
   }
 
   // Sube a Bunny un archivo en flujo continuo (PUT con Content-Length): no se guarda en el disco del servidor

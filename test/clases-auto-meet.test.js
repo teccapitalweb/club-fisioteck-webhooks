@@ -61,6 +61,7 @@ async function levantar(cfg = {}, env = {}) {
     if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords?')) return resp(200, { conferenceRecords: cfg.conferencias === undefined ? [{ name: 'conferenceRecords/c1' }] : cfg.conferencias });
     if (u.endsWith('/conferenceRecords/c1/recordings')) return resp(200, { recordings: cfg.grabaciones || [] });
     if (u.startsWith('https://www.googleapis.com/calendar/v3/calendars/primary/events')) return cfg.calendarSinPermiso ? resp(403, { error: { message: 'Request had insufficient authentication scopes.' } }) : resp(200, cfg.calendarSinEnlace ? { id: 'ev1' } : { id: 'ev1', hangoutLink: 'https://meet.google.com/zzz-yyyy-xxx' });
+    if (u.startsWith('https://www.googleapis.com/drive/v3/files?') && cfg.driveListaError) return resp(400, { error: { message: 'Invalid Value' } });
     if (u.startsWith('https://www.googleapis.com/drive/v3/files?')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(200, { files: cfg.archivosDrive || [] }); }
     if (u.includes('/drive/v3/files/') && u.includes('fields=')) return cfg.driveError ? resp(403, { error: { message: 'The user does not have sufficient permissions for this file.' } }) : resp(200, { size: String(CONTENIDO.length), name: 'clase.mp4', mimeType: 'video/mp4' });
     if (u.includes('/drive/v3/files/') && u.includes('alt=media')) return { status: 200, ok: true, body: new Response(CONTENIDO).body, json: async () => ({}) };
@@ -189,7 +190,8 @@ test('drive: encuentra el MP4 de la clase por el código del enlace, lo pasa a B
     assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').estado, 'esperando'); assert.equal((cfg.consultasDrive || []).length, 0, 'antes de la hora no se consulta el Drive');
     s.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s.ca.revisarMeet();
     const consulta = cfg.consultasDrive[0];
-    assert.ok(consulta.includes("mimeType = 'video/mp4'") && consulta.includes("'me' in owners") && consulta.includes("createdTime >= '2026-12-01T22:30:00.000Z'"), 'busca MP4 propios creados desde 30 min antes de la clase');
+    assert.ok(consulta.includes("mimeType = 'video/mp4'") && consulta.includes("createdTime >= '2026-12-01T22:30:00Z'"), 'busca MP4 creados desde 30 min antes de la clase (fecha sin milisegundos)');
+    assert.ok(!consulta.includes('orderBy') && !consulta.includes('includeItemsFromAllDrives'), 'consulta sencilla: sin orden ni unidades compartidas');
     const e = s.db.datos.get('clasesAuto/drive-prueba-1');
     assert.equal(e.estado, 'subiendo'); assert.equal(e.archivoDrive, 'la-nuestra'); assert.equal(e.videoId, VIDEO);
     assert.ok(s.bunny.recibido.put.cuerpo.equals(CONTENIDO));
@@ -247,4 +249,26 @@ test('drive: sin enlace, el servidor crea la reunión de Meet solo (evento de Ca
   } finally { s2.cerrar(); }
   const s3 = await levantar({ calendarSinEnlace: true });
   try { assert.equal((await s3.llamar('/api/admin/clases-auto/drive', CLASE, 'jefa')).status, 502); } finally { s3.cerrar(); }
+});
+
+test('drive: caso real de Meet con Calendar: el video se llama como el TÍTULO de la clase, no como el código; se ignoran videos ajenos y de otros días', async () => {
+  const cfg = { archivosDrive: [
+    { id: 'ajeno', name: 'PRUEBA 2 - 2026/11/10 12:47 CST - Recording', size: '9000', createdTime: '2026-12-02T00:10:00Z', ownedByMe: false },
+    { id: 'real', name: 'PRUEBA 2 - 2026/12/01 17:02 CST - Recording', size: '5000', createdTime: '2026-12-02T00:08:00Z', ownedByMe: true },
+    { id: 'otra-clase', name: 'CLASE 4 Y 5. - Recording', size: '7000', createdTime: '2026-12-02T00:05:00Z', ownedByMe: true }] };
+  const s = await levantar(cfg);
+  try {
+    await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, title: 'PRUEBA 2', link: ENLACE }, 'jefa');
+    s.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s.ca.revisarMeet();
+    const e = s.db.datos.get('clasesAuto/drive-prueba-1');
+    assert.equal(e.estado, 'subiendo'); assert.equal(e.archivoDrive, 'real');
+  } finally { s.cerrar(); }
+  // si Google rechaza la búsqueda, el panel dice QUÉ falló (y se vuelve a intentar en la próxima revisión)
+  const s2 = await levantar({ driveListaError: true });
+  try {
+    await s2.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'jefa');
+    s2.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s2.ca.revisarMeet();
+    const e = s2.db.datos.get('clasesAuto/drive-prueba-1');
+    assert.equal(e.estado, 'esperando'); assert.match(e.error, /Al buscar en el Drive: Google respondió con error 400: Invalid Value/);
+  } finally { s2.cerrar(); }
 });
