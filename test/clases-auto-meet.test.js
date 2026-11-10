@@ -61,6 +61,7 @@ async function levantar(cfg = {}, env = {}) {
     if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords?')) return resp(200, { conferenceRecords: cfg.conferencias === undefined ? [{ name: 'conferenceRecords/c1' }] : cfg.conferencias });
     if (u.endsWith('/conferenceRecords/c1/recordings')) return resp(200, { recordings: cfg.grabaciones || [] });
     if (u.startsWith('https://www.googleapis.com/calendar/v3/calendars/primary/events')) return cfg.calendarSinPermiso ? resp(403, { error: { message: 'Request had insufficient authentication scopes.' } }) : resp(200, cfg.calendarSinEnlace ? { id: 'ev1' } : { id: 'ev1', hangoutLink: 'https://meet.google.com/zzz-yyyy-xxx' });
+    if (u.startsWith('https://www.googleapis.com/drive/v3/files?') && cfg.rechazaFecha && decodeURIComponent(u).includes('createdTime >=')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(400, { error: { message: 'Invalid Value' } }); }
     if (u.startsWith('https://www.googleapis.com/drive/v3/files?') && cfg.driveListaError) return resp(400, { error: { message: 'Invalid Value' } });
     if (u.startsWith('https://www.googleapis.com/drive/v3/files?')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(200, { files: cfg.archivosDrive || [] }); }
     if (u.includes('/drive/v3/files/') && u.includes('fields=')) return cfg.driveError ? resp(403, { error: { message: 'The user does not have sufficient permissions for this file.' } }) : resp(200, { size: String(CONTENIDO.length), name: 'clase.mp4', mimeType: 'video/mp4' });
@@ -271,4 +272,42 @@ test('drive: caso real de Meet con Calendar: el video se llama como el TÍTULO d
     const e = s2.db.datos.get('clasesAuto/drive-prueba-1');
     assert.equal(e.estado, 'esperando'); assert.match(e.error, /Al buscar en el Drive: Google respondió con error 400: Invalid Value/);
   } finally { s2.cerrar(); }
+});
+
+test('drive: una clase con la hora de inicio dañada (en 0, como la dejaba un reintento anterior) se repara sola y la búsqueda usa la fecha correcta', async () => {
+  const cfg = { archivosDrive: [ARCH('real', 'PRUEBA 2 - 2026/12/01 17:02 CST - Recording', '2026-12-02T00:08:00Z')] };
+  const s = await levantar(cfg);
+  try {
+    await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, title: 'PRUEBA 2', link: ENLACE }, 'jefa');
+    const doc = s.db.datos.get('clasesAuto/drive-prueba-1'); s.db.datos.set('clasesAuto/drive-prueba-1', { ...doc, inicioMs: 0 }); // estado dañado
+    s.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s.ca.revisarMeet();
+    assert.ok(cfg.consultasDrive[0].includes("createdTime >= '2026-12-01T22:30:00Z'"), 'la fecha sale de la hora escrita de la clase, no de 1969');
+    assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').archivoDrive, 'real');
+  } finally { s.cerrar(); }
+  // «Reintentar» / «Buscar ahora» no borra la hora de la clase y fuerza la búsqueda aunque la clase aún no haya empezado
+  const s2 = await levantar({ archivosDrive: [ARCH('x', 'PRUEBA 2 - Recording', '2026-12-01T22:40:00Z')] });
+  try {
+    await s2.llamar('/api/admin/clases-auto/drive', { ...CLASE, title: 'PRUEBA 2', link: ENLACE }, 'jefa');
+    s2.reloj.t = Date.parse('2026-12-01T22:35:00Z'); // 10:35 h antes de las 17:00 CDMX del 1-dic: aún no empieza
+    await s2.ca.revisarMeet(); assert.equal(s2.db.datos.get('clasesAuto/drive-prueba-1').estado, 'esperando');
+    await s2.llamar('/api/admin/clases-auto/drive-prueba-1/reintentar', {}, 'jefa');
+    await new Promise(r => setTimeout(r, 150));
+    const e = s2.db.datos.get('clasesAuto/drive-prueba-1');
+    assert.equal(e.inicioMs, Date.parse('2026-12-01T23:00:00Z'), 'la hora de la clase se conserva');
+    assert.equal(e.archivoDrive, 'x'); assert.equal(e.forzar, false);
+  } finally { s2.cerrar(); }
+});
+
+test('drive: si Google rechaza el filtro por fecha, se reintenta sin él y la fecha se filtra en el servidor (no se toman videos viejos)', async () => {
+  const cfg = { rechazaFecha: true, archivosDrive: [
+    ARCH('viejo', 'PRUEBA 2 - 2026/11/06 - Recording', '2026-11-06T23:57:00Z'),
+    ARCH('nuevo', 'PRUEBA 2 - 2026/12/01 17:02 CST - Recording', '2026-12-02T00:08:00Z')] };
+  const s = await levantar(cfg);
+  try {
+    await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, title: 'PRUEBA 2', link: ENLACE }, 'jefa');
+    s.reloj.t = Date.parse('2026-12-02T00:30:00Z'); await s.ca.revisarMeet();
+    assert.equal(cfg.consultasDrive.length, 2, 'primero con fecha y luego sin ella');
+    assert.ok(!cfg.consultasDrive[1].includes('createdTime >='));
+    assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').archivoDrive, 'nuevo');
+  } finally { s.cerrar(); }
 });

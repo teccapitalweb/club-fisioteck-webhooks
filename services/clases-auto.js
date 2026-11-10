@@ -206,17 +206,26 @@ function crearClasesAuto(deps) {
     return enlace;
   }
 
+  const inicioDe = e => { if (Number(e.inicioMs) > 0) return Number(e.inicioMs); const t = Date.parse(String(e.fecha || '').replace(' ', 'T') + ':00-06:00'); return Number.isFinite(t) ? t : 0; };
+
   // MEET CON GMAIL: busca en el Drive de la cuenta conectada el MP4 de la clase (null si todavía no aparece)
   const codigoMeet = v => { const m = String(v || '').match(/meet\.google\.com\/(?:lookup\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})/i); return m ? m[1].toLowerCase() : ''; };
   async function buscarGrabacionDrive(e) {
     // Consulta sencilla (sin orden ni opciones de unidades compartidas): el filtro fino se hace aquí, para no depender de detalles del buscador de Drive
-    const desde = new Date((e.inicioMs || 0) - 30 * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    const q = "mimeType = 'video/mp4' and trashed = false and createdTime >= '" + desde + "'";
+    const ini = inicioDe(e);
+    const desde = new Date(Math.max(ini - 30 * 60000, Date.UTC(2020, 0, 1))).toISOString().replace(/\.\d{3}Z$/, 'Z'); // nunca una fecha imposible
+    const campos = '&fields=' + encodeURIComponent('files(id,name,size,createdTime,ownedByMe)');
+    const listar = q => google(DRIVE_API + '/files?q=' + encodeURIComponent(q) + '&pageSize=100' + campos);
     let r;
-    try { r = await google(DRIVE_API + '/files?q=' + encodeURIComponent(q) + '&pageSize=50&fields=' + encodeURIComponent('files(id,name,size,createdTime,ownedByMe)')); }
-    catch (err) { throw errorHttp(502, 'Al buscar en el Drive: ' + err.message); }
-    const hasta = (e.finMs || 0) + 6 * 3600000, minus = t => String(t || '').toLowerCase();
-    const candidatos = (r.files || []).filter(x => x.ownedByMe !== false && Number(x.size) > 0 && Date.parse(x.createdTime || '') <= hasta);
+    try { r = await listar("mimeType = 'video/mp4' and trashed = false and createdTime >= '" + desde + "'"); }
+    catch (err) {
+      // Si Google rechaza el filtro por fecha, se vuelve a pedir sin él y la fecha se filtra aquí
+      if (!/error 400/.test(err.message)) throw errorHttp(502, 'Al buscar en el Drive: ' + err.message);
+      try { r = await listar("mimeType = 'video/mp4' and trashed = false"); }
+      catch (err2) { throw errorHttp(502, 'Al buscar en el Drive: ' + err2.message); }
+    }
+    const hasta = (e.finMs || ini + 60 * 60000) + 6 * 3600000, minus = t => String(t || '').toLowerCase();
+    const desdeMs = Date.parse(desde), candidatos = (r.files || []).filter(x => x.ownedByMe !== false && Number(x.size) > 0 && Date.parse(x.createdTime || '') >= desdeMs && Date.parse(x.createdTime || '') <= hasta);
     // Meet nombra el video con el TÍTULO del evento (o con el código si la reunión no tiene título): se busca primero por código, luego por título
     const porCodigo = e.codigo ? candidatos.filter(x => minus(x.name).includes(e.codigo)) : [];
     const titulo = minus(e.titulo).trim(), porTitulo = titulo ? candidatos.filter(x => minus(x.name).includes(titulo)) : [];
@@ -266,11 +275,11 @@ function crearClasesAuto(deps) {
       const sn = await db.collection(COL).limit(100).get();
       for (const d of sn.docs) {
         const e = d.data() || {};
-        if ((e.proveedor !== 'meet' && e.proveedor !== 'drive') || e.estado !== 'esperando' || ahora() < (e.inicioMs || 0)) continue;
+        if ((e.proveedor !== 'meet' && e.proveedor !== 'drive') || e.estado !== 'esperando' || (ahora() < inicioDe(e) && !e.forzar)) continue;
         try {
           const grab = e.proveedor === 'drive' ? await buscarGrabacionDrive(e) : await buscarGrabacionMeet(e.spaceName);
           if (!grab) { if (ahora() > (e.finMs || 0) + ESPERA_MAX_MS) await marcar(d.id, { estado: 'error', error: e.proveedor === 'drive' ? 'Pasaron 48 horas y no apareció ninguna grabación nueva en el Drive. Revisa que hayas pulsado Grabar en Meet y que el video aparezca en el Drive de la cuenta conectada.' : 'Pasaron 48 horas y Meet no generó ninguna grabación. Revisa que la cuenta organizadora tenga la grabación habilitada y que alguien con permiso haya entrado a la reunión.' }); continue; }
-          await marcar(d.id, { estado: 'descargando', error: '', archivoNombre: texto(grab.nombre, 200), encontrado: new Date(ahora()).toISOString() });
+          await marcar(d.id, { estado: 'descargando', error: '', forzar: false, archivoNombre: texto(grab.nombre, 200), encontrado: new Date(ahora()).toISOString() });
           try { await transferirDriveABunny(d.id, e, grab); }
           catch (err) { await marcar(d.id, { estado: 'error', error: texto(err.message, 300) }); }
         } catch (err) { await marcar(d.id, err.definitivo ? { estado: 'error', error: texto(err.message, 300) } : { error: texto(err.message, 300) }); } // se vuelve a intentar en la próxima revisión
@@ -380,7 +389,7 @@ function crearClasesAuto(deps) {
     app.post('/api/admin/clases-auto/:id/reintentar', envolver('reintentar', async (req, res) => {
       const id = idReunion(req.params.id), s = await db.collection(COL).doc(id).get();
       if (!s.exists) throw errorHttp(404, 'No encontramos esa reunión.');
-      if (['meet', 'drive'].includes((s.data() || {}).proveedor)) { await marcar(id, { estado: 'esperando', error: '', inicioMs: 0 }); revisarMeet().catch(() => {}); return res.json({ ok: true }); } // se vuelve a buscar en la próxima revisión
+      if (['meet', 'drive'].includes((s.data() || {}).proveedor)) { const dato = s.data() || {}; await marcar(id, { estado: 'esperando', error: '', forzar: true, inicioMs: inicioDe(dato) }); revisarMeet().catch(() => {}); return res.json({ ok: true }); } // se vuelve a buscar en la próxima revisión
       const r = await zoom('/meetings/' + encodeURIComponent(id) + '/recordings', { method: 'GET' });
       const archivo = elegirArchivo(r.recording_files);
       if (!archivo) throw errorHttp(404, 'Zoom todavía no tiene una grabación MP4 de esta reunión.');
