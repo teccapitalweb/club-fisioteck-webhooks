@@ -60,6 +60,7 @@ async function levantar(cfg = {}, env = {}) {
     if (u === 'https://meet.googleapis.com/v2/spaces' && opts.method === 'POST') return resp(200, { name: 'spaces/abcDEF123xyz', meetingUri: 'https://meet.google.com/abc-defg-hij', meetingCode: 'abc-defg-hij' });
     if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords?')) return resp(200, { conferenceRecords: cfg.conferencias === undefined ? [{ name: 'conferenceRecords/c1' }] : cfg.conferencias });
     if (u.endsWith('/conferenceRecords/c1/recordings')) return resp(200, { recordings: cfg.grabaciones || [] });
+    if (u.startsWith('https://www.googleapis.com/calendar/v3/calendars/primary/events')) return cfg.calendarSinPermiso ? resp(403, { error: { message: 'Request had insufficient authentication scopes.' } }) : resp(200, cfg.calendarSinEnlace ? { id: 'ev1' } : { id: 'ev1', hangoutLink: 'https://meet.google.com/zzz-yyyy-xxx' });
     if (u.startsWith('https://www.googleapis.com/drive/v3/files?')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(200, { files: cfg.archivosDrive || [] }); }
     if (u.includes('/drive/v3/files/') && u.includes('fields=')) return cfg.driveError ? resp(403, { error: { message: 'The user does not have sufficient permissions for this file.' } }) : resp(200, { size: String(CONTENIDO.length), name: 'clase.mp4', mimeType: 'video/mp4' });
     if (u.includes('/drive/v3/files/') && u.includes('alt=media')) return { status: 200, ok: true, body: new Response(CONTENIDO).body, json: async () => ({}) };
@@ -165,7 +166,6 @@ test('drive: el administrador registra la clase con su enlace de Meet; se valida
   try {
     assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE }, 'ana')).status, 403);
     assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: 'https://zoom.us/j/123' }, 'jefa')).status, 400, 'tiene que ser un enlace de Meet');
-    assert.equal((await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: '' }, 'jefa')).status, 400);
     const r = await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, link: ENLACE + '?authuser=0' }, 'jefa');
     assert.equal(r.status, 200); assert.equal(r.cuerpo.meetingId, 'drive-prueba-1');
     const doc = s.db.datos.get('clasesAuto/drive-prueba-1');
@@ -220,4 +220,31 @@ test('drive: sin código en el nombre usa el único video del horario; si hay va
     s3.reloj.t = Date.parse('2026-12-04T01:00:00Z'); await s3.ca.revisarMeet();
     const e = s3.db.datos.get('clasesAuto/drive-prueba-1'); assert.equal(e.estado, 'error'); assert.match(e.error, /no apareció ninguna grabación nueva en el Drive/);
   } finally { s3.cerrar(); }
+});
+
+test('drive: sin enlace, el servidor crea la reunión de Meet solo (evento de Calendar) y la registra; los errores de permiso se explican', async () => {
+  const s = await levantar();
+  try {
+    const r = await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, desc: 'Clase de prueba' }, 'jefa');
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.joinUrl, 'https://meet.google.com/zzz-yyyy-xxx'); assert.equal(r.cuerpo.creado, true);
+    const ev = s.llamadas.find(l => l.url.includes('/calendar/v3/') && l.metodo === 'POST');
+    assert.ok(ev.url.includes('conferenceDataVersion=1'));
+    const cuerpo = JSON.parse(ev.cuerpo);
+    assert.equal(cuerpo.summary, 'Prueba de Meet'); assert.equal(cuerpo.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
+    assert.equal(cuerpo.start.dateTime, '2026-12-01T23:00:00.000Z'); assert.equal(cuerpo.end.dateTime, '2026-12-02T00:00:00.000Z'); assert.equal(cuerpo.attendees, undefined, 'no invita a nadie');
+    assert.equal(ev.cab.Authorization, 'Bearer g-token');
+    assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').codigo, 'zzz-yyyy-xxx');
+    // con un enlace puesto a mano no crea nada en Calendar
+    s.llamadas.length = 0;
+    const m = await s.llamar('/api/admin/clases-auto/drive', { ...CLASE, id: 'prueba-2', link: ENLACE }, 'jefa');
+    assert.equal(m.cuerpo.creado, false); assert.equal(s.llamadas.filter(l => l.url.includes('/calendar/')).length, 0);
+  } finally { s.cerrar(); }
+  const s2 = await levantar({ calendarSinPermiso: true });
+  try {
+    const r = await s2.llamar('/api/admin/clases-auto/drive', CLASE, 'jefa');
+    assert.equal(r.status, 502); assert.match(r.cuerpo.error, /falta el permiso de Calendar/);
+    assert.equal(s2.db.datos.get('clasesAuto/drive-prueba-1'), undefined, 'si no se pudo crear la reunión no se registra nada');
+  } finally { s2.cerrar(); }
+  const s3 = await levantar({ calendarSinEnlace: true });
+  try { assert.equal((await s3.llamar('/api/admin/clases-auto/drive', CLASE, 'jefa')).status, 502); } finally { s3.cerrar(); }
 });

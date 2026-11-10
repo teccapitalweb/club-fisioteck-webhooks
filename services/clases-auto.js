@@ -22,7 +22,8 @@
 //   Variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN (de la cuenta de Google Workspace que organiza y graba; se obtienen una vez con
 //   scripts/google-token.js). Scopes: meetings.space.created, meetings.space.settings y drive.readonly.
 //  MEET CON UNA CUENTA DE GMAIL (sin Workspace, sin API de Meet): el administrador crea y graba la reunión a mano (la grabación queda en el Drive de la cuenta)
-//   y el servidor VIGILA ese Drive: POST /api/admin/clases-auto/drive registra la clase con su enlace de Meet; pasada la hora, busca un MP4 nuevo del Drive
+//   y el servidor VIGILA ese Drive. Si no pones enlace, el servidor CREA la reunión de Meet solo (evento de Google Calendar con su enlace de Meet; permiso calendar.events).
+//   POST /api/admin/clases-auto/drive registra la clase con su enlace de Meet; pasada la hora, busca un MP4 nuevo del Drive
 //   (por el código del enlace en el nombre, o el único del horario) y lo pasa a Bunny igual que con Meet. Solo necesita el permiso drive.readonly.
 //  Administrador:  POST /api/admin/clases-auto/zoom                  { id, title, date, time, duration } → { joinUrl, startUrl, meetingId }
 //                  GET  /api/admin/clases-auto                       → { entradas: [...] } (estado de cada grabación; refresca las pendientes)
@@ -37,6 +38,7 @@ const { esAdminPorToken } = require('./certificados');
 
 const COL = 'clasesAuto';
 const ZOOM_API = 'https://api.zoom.us/v2', ZOOM_OAUTH = 'https://zoom.us/oauth/token', BUNNY_API = 'https://video.bunnycdn.com';
+const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 const MEET_API = 'https://meet.googleapis.com/v2', DRIVE_API = 'https://www.googleapis.com/drive/v3', GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const ESPERA_MAX_MS = 48 * 3600 * 1000; // si 48 h después de la clase no hay grabación, se avisa en el panel
 const hmac = (clave, texto) => crypto.createHmac('sha256', clave).update(texto).digest('hex');
@@ -185,6 +187,25 @@ function crearClasesAuto(deps) {
     return mejor;
   }
 
+  // Crea un evento en el Calendar de la cuenta con su enlace de Meet (funciona con Gmail; no invita a nadie)
+  async function crearEnlaceMeetConCalendar({ titulo, inicioMs, duracion, descripcion }) {
+    const cuerpo = {
+      summary: titulo, description: descripcion || '',
+      start: { dateTime: new Date(inicioMs).toISOString(), timeZone: 'America/Mexico_City' },
+      end: { dateTime: new Date(inicioMs + duracion * 60000).toISOString(), timeZone: 'America/Mexico_City' },
+      conferenceData: { createRequest: { requestId: crypto.randomBytes(12).toString('hex'), conferenceSolutionKey: { type: 'hangoutsMeet' } } }
+    };
+    let ev;
+    try { ev = await google(CALENDAR_API + '/calendars/primary/events?conferenceDataVersion=1', { method: 'POST', body: JSON.stringify(cuerpo) }); }
+    catch (e) {
+      if (/\b403\b/.test(e.message)) throw errorHttp(502, 'Google no dejó crear la reunión: falta el permiso de Calendar. Activa Google Calendar API en tu proyecto y vuelve a conectar la cuenta con scripts/google-token.js --drive.');
+      throw e;
+    }
+    const enlace = ev.hangoutLink || (((ev.conferenceData || {}).entryPoints || []).find(p => p.entryPointType === 'video') || {}).uri || '';
+    if (!codigoMeet(enlace)) throw errorHttp(502, 'Google creó el evento pero no devolvió el enlace de Meet. Inténtalo de nuevo.');
+    return enlace;
+  }
+
   // MEET CON GMAIL: busca en el Drive de la cuenta conectada el MP4 de la clase (null si todavía no aparece)
   const codigoMeet = v => { const m = String(v || '').match(/meet\.google\.com\/(?:lookup\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})/i); return m ? m[1].toLowerCase() : ''; };
   async function buscarGrabacionDrive(e) {
@@ -327,15 +348,18 @@ function crearClasesAuto(deps) {
     }));
 
     app.post('/api/admin/clases-auto/drive', envolver('drive', async (req, res, d) => {
-      const b = req.body || {}, claseId = idClase(b.id), date = texto(b.date, 10), time = texto(b.time, 5), titulo = texto(b.title, 160), enlace = texto(b.link, 500);
+      const b = req.body || {}, claseId = idClase(b.id), date = texto(b.date, 10), time = texto(b.time, 5), titulo = texto(b.title, 160);
+      let enlace = texto(b.link, 500);
       if (!titulo) throw errorHttp(400, 'El título es obligatorio.');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw errorHttp(400, 'Escribe la fecha y la hora de la clase.');
-      const codigo = codigoMeet(enlace);
-      if (!codigo) throw errorHttp(400, 'Pega el enlace de la reunión de Google Meet (por ejemplo https://meet.google.com/abc-defg-hij).');
+      if (enlace && !codigoMeet(enlace)) throw errorHttp(400, 'El enlace tiene que ser de Google Meet (por ejemplo https://meet.google.com/abc-defg-hij). Déjalo vacío para que se cree solo.');
       if (!meetListo()) throw errorHttp(503, 'Falta conectar la cuenta de Google en el servidor (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y GOOGLE_REFRESH_TOKEN).');
       const duracion = Math.max(15, Math.min(480, Math.round(Number(b.duration)) || 60)), inicioMs = Date.parse(date + 'T' + time + ':00-06:00') || 0, id = 'drive-' + claseId;
+      const creado = !enlace;
+      if (creado) enlace = await crearEnlaceMeetConCalendar({ titulo, inicioMs, duracion, descripcion: texto(b.desc, 500) });
+      const codigo = codigoMeet(enlace);
       await db.collection(COL).doc(id).set({ proveedor: 'drive', meetingId: id, codigo, claseId, titulo, fecha: date + ' ' + time, inicioMs, finMs: inicioMs + duracion * 60000, estado: 'esperando', error: '', creado: new Date(ahora()).toISOString(), por: texto(d.email, 200) });
-      res.json({ ok: true, meetingId: id, joinUrl: enlace, startUrl: '' });
+      res.json({ ok: true, meetingId: id, joinUrl: enlace, startUrl: '', creado });
     }));
 
     app.get('/api/admin/clases-auto', envolver('lista', async (req, res) => {
