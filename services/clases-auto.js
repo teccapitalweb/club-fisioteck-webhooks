@@ -28,6 +28,7 @@
 //  Administrador:  POST /api/admin/clases-auto/zoom                  { id, title, date, time, duration } → { joinUrl, startUrl, meetingId }
 //                  GET  /api/admin/clases-auto                       → { entradas: [...] } (estado de cada grabación; refresca las pendientes)
 //                  POST /api/admin/clases-auto/:meetingId/reintentar → vuelve a pedir la grabación a Zoom y a subirla a Bunny
+//                  DELETE /api/admin/clases-auto/:id[?bunny=1]       → quita la clase de esta lista (con bunny=1 borra también el video de Bunny)
 //  Zoom:           POST /api/zoom/webhook                            (firma HMAC; también responde la validación del endpoint)
 const crypto = require('crypto');
 const http = require('http');
@@ -384,6 +385,16 @@ function crearClasesAuto(deps) {
       const sn = await db.collection(COL).limit(100).get();
       const entradas = sn.docs.map(x => ({ ...(x.data() || {}), id: x.id })).sort((p, q) => String(q.creado || '').localeCompare(String(p.creado || '')));
       res.json({ ok: true, entradas, zoomListo: zoomListo(), meetListo: meetListo(), bunnyListo: bunnyListo() });
+    }));
+
+    // Quitar una clase de la lista de grabaciones automáticas; con ?bunny=1 también se borra su video de Bunny (si falla en Bunny, no se borra nada para poder repetirlo)
+    app.delete('/api/admin/clases-auto/:id', envolver('borrar', async (req, res) => {
+      const id = idReunion(req.params.id), ref = db.collection(COL).doc(id), s = await ref.get();
+      if (!s.exists) return res.json({ ok: true, borrado: false, bunnyBorrado: false });
+      const e = s.data() || {}; let bunnyBorrado = false;
+      if (req.query.bunny === '1' && e.videoId) { await bunny('/videos/' + encodeURIComponent(e.videoId), { method: 'DELETE' }); bunnyBorrado = true; }
+      await ref.delete();
+      res.json({ ok: true, borrado: true, bunnyBorrado });
     }));
 
     app.post('/api/admin/clases-auto/:id/reintentar', envolver('reintentar', async (req, res) => {

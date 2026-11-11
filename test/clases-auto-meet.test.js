@@ -76,7 +76,7 @@ async function levantar(cfg = {}, env = {}) {
   ca.montarRutas(app);
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const base = 'http://127.0.0.1:' + srv.address().port;
-  const llamar = async (ruta, cuerpo, quien) => { const r = await fetch(base + ruta, { method: cuerpo ? 'POST' : 'GET', headers: { Authorization: quien ? 'Bearer ' + quien : '', 'Content-Type': 'application/json' }, body: cuerpo ? JSON.stringify(cuerpo) : undefined }); return { status: r.status, cuerpo: await r.json().catch(() => ({})) }; };
+  const llamar = async (ruta, cuerpo, quien, metodo) => { const r = await fetch(base + ruta, { method: metodo || (cuerpo ? 'POST' : 'GET'), headers: { Authorization: quien ? 'Bearer ' + quien : '', 'Content-Type': 'application/json' }, body: cuerpo ? JSON.stringify(cuerpo) : undefined }); return { status: r.status, cuerpo: await r.json().catch(() => ({})) }; };
   return { db, ca, reloj, llamadas, llamar, bunny, cerrar: () => { srv.close(); bunny.srv.close(); } };
 }
 const CLASE = { id: 'prueba-1', title: 'Prueba de Meet', date: '2026-12-01', time: '17:00', duration: 60 };
@@ -310,4 +310,32 @@ test('drive: si Google rechaza el filtro por fecha, se reintenta sin él y la fe
     assert.ok(!cfg.consultasDrive[1].includes('createdTime >='));
     assert.equal(s.db.datos.get('clasesAuto/drive-prueba-1').archivoDrive, 'nuevo');
   } finally { s.cerrar(); }
+});
+
+test('eliminar una clase automática: solo un administrador; el video de Bunny se borra únicamente si se pide', async () => {
+  const s = await levantar({ grabaciones: [REC('FILE_GENERATED', '2026-12-01T23:00:00Z', '2026-12-02T00:00:00Z', 'f1')] });
+  try {
+    await s.llamar('/api/admin/clases-auto/meet', CLASE, 'jefa');
+    s.reloj.t = Date.parse('2026-12-02T00:10:00Z'); await s.ca.revisarMeet();
+    assert.equal(s.db.datos.get('clasesAuto/meet-abcDEF123xyz').videoId, VIDEO);
+    assert.equal((await s.llamar('/api/admin/clases-auto/meet-abcDEF123xyz', null, 'ana', 'DELETE')).status, 403);
+    assert.ok(s.db.datos.has('clasesAuto/meet-abcDEF123xyz'));
+    // sin ?bunny=1 el video de Bunny se conserva
+    const r1 = await s.llamar('/api/admin/clases-auto/meet-abcDEF123xyz', null, 'jefa', 'DELETE');
+    assert.equal(r1.status, 200); assert.equal(r1.cuerpo.borrado, true); assert.equal(r1.cuerpo.bunnyBorrado, false);
+    assert.equal(s.llamadas.filter(l => l.metodo === 'DELETE').length, 0);
+    assert.equal(s.db.datos.has('clasesAuto/meet-abcDEF123xyz'), false);
+    // lo que no existe no da error
+    assert.equal((await s.llamar('/api/admin/clases-auto/meet-abcDEF123xyz', null, 'jefa', 'DELETE')).cuerpo.borrado, false);
+  } finally { s.cerrar(); }
+  const s2 = await levantar({ grabaciones: [REC('FILE_GENERATED', '2026-12-01T23:00:00Z', '2026-12-02T00:00:00Z', 'f1')] });
+  try {
+    await s2.llamar('/api/admin/clases-auto/meet', CLASE, 'jefa');
+    s2.reloj.t = Date.parse('2026-12-02T00:10:00Z'); await s2.ca.revisarMeet();
+    const r = await s2.llamar('/api/admin/clases-auto/meet-abcDEF123xyz?bunny=1', null, 'jefa', 'DELETE');
+    assert.equal(r.cuerpo.bunnyBorrado, true);
+    const borrado = s2.llamadas.find(l => l.metodo === 'DELETE');
+    assert.ok(borrado.url.endsWith('/videos/' + VIDEO), 'se borra ese video de Bunny');
+    assert.equal(s2.db.datos.has('clasesAuto/meet-abcDEF123xyz'), false);
+  } finally { s2.cerrar(); }
 });
