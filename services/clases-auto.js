@@ -106,7 +106,7 @@ function crearClasesAuto(deps) {
   // La grabación lista se enlaza con la clase: webinarsPrivados/{id} (clase real) o clasesPrueba/{id} (prueba de administradores)
   async function enlazarVideo(claseId, videoId) {
     const col = /^prueba-/.test(claseId) ? 'clasesPrueba' : 'webinarsPrivados';
-    await db.collection(col).doc(claseId).set({ grabacionVideoId: videoId, tieneGrabacion: true }, { merge: true });
+    await db.collection(col).doc(claseId).set({ grabacionVideoId: videoId, tieneGrabacion: true, videoManual: false }, { merge: true });
   }
   const marcar = (id, campos) => db.collection(COL).doc(id).set({ ...campos, actualizado: new Date(ahora()).toISOString() }, { merge: true });
 
@@ -132,7 +132,7 @@ function crearClasesAuto(deps) {
       const e = d.data() || {};
       if (e.estado !== 'lista' || !e.videoId || !e.claseId) continue;
       const col = /^prueba-/.test(e.claseId) ? 'clasesPrueba' : 'webinarsPrivados', c = await db.collection(col).doc(e.claseId).get();
-      if (c.exists && !(c.data() || {}).grabacionVideoId) await enlazarVideo(e.claseId, e.videoId);
+      if (c.exists && !(c.data() || {}).grabacionVideoId && !(c.data() || {}).videoManual) await enlazarVideo(e.claseId, e.videoId);
     }
   }
 

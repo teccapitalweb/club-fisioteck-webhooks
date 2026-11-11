@@ -16,6 +16,9 @@ const { esAdminPorToken } = require('./certificados');
 
 const COL = 'webinarsPrivados';
 function errorHttp(status, mensaje) { const e = new Error(mensaje); e.status = status; return e; }
+// ID de video de Bunny (GUID). Vacío = sin video. Cualquier otra cosa es un error.
+const GUID_VIDEO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function videoIdOpcional(v) { const t = String(v == null ? '' : v).trim().toLowerCase(); if (!t) return ''; if (!GUID_VIDEO.test(t)) throw errorHttp(400, 'El ID del video de Bunny no es válido. Cópialo de Bunny (Video ID): tiene 5 grupos de letras y números separados por guiones.'); return t; }
 const idValido = v => { const s = String(v == null ? '' : v).trim(); if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) throw errorHttp(400, 'Identificador de sesión inválido.'); return s; };
 function urlOpcional(v, campo) {
   const s = String(v == null ? '' : v).trim();
@@ -94,7 +97,10 @@ function montarRutasWebinars(app, deps) {
     // Al editar la clase se conserva la grabación que ya tenía (Zoom/Meet → Bunny): el formulario no la incluye y no debe borrarla
     const previo = await db.collection(PRUEBA).doc(id).get(), antes = previo.exists ? (previo.data() || {}) : {};
     const nuevo = limpiarPrueba(b, id);
-    const doc = { ...nuevo, ...(antes.grabacionVideoId ? { grabacionVideoId: antes.grabacionVideoId, tieneGrabacion: true } : {}), por: texto(d.email, 200), en: new Date().toISOString() };
+    const hayCampo = Object.prototype.hasOwnProperty.call(b, 'grabacionVideoId');
+    const videoId = hayCampo ? videoIdOpcional(b.grabacionVideoId) : String(antes.grabacionVideoId || '');
+    const cambioManual = hayCampo && videoId !== String(antes.grabacionVideoId || '');
+    const doc = { ...nuevo, ...(videoId ? { grabacionVideoId: videoId, tieneGrabacion: true } : {}), ...(cambioManual ? { videoManual: true } : (antes.videoManual ? { videoManual: true } : {})), por: texto(d.email, 200), en: new Date().toISOString() };
     await db.collection(PRUEBA).doc(id).set(doc);
     res.json({ ok: true, clase: doc });
   }));
@@ -138,14 +144,17 @@ function montarRutasWebinars(app, deps) {
 
   app.get('/api/admin/webinars-enlaces', envolver('admin-lista', true, async (req, res) => {
     const sn = await db.collection(COL).limit(500).get();
-    res.json({ ok: true, webinars: sn.docs.map(x => { const v = x.data() || {}; return { id: x.id, link: v.link || '', recordingUrl: v.recordingUrl || '' }; }) });
+    res.json({ ok: true, webinars: sn.docs.map(x => { const v = x.data() || {}; return { id: x.id, link: v.link || '', recordingUrl: v.recordingUrl || '', grabacionVideoId: v.grabacionVideoId || '' }; }) });
   }));
   app.post('/api/admin/webinars-enlaces', envolver('admin-guardar', true, async (req, res, d) => {
     const b = req.body || {}, id = idValido(b.id);
     const link = urlOpcional(b.link, 'enlace de la sesión'), recordingUrl = urlOpcional(b.recordingUrl, 'enlace de la grabación');
-    const previo = await db.collection(COL).doc(id).get(), grabacionVideoId = previo.exists ? String((previo.data() || {}).grabacionVideoId || '') : '';
+    const previo = await db.collection(COL).doc(id).get(), antes = previo.exists ? (previo.data() || {}) : {};
+    const hayCampo = Object.prototype.hasOwnProperty.call(b, 'grabacionVideoId');
+    const grabacionVideoId = hayCampo ? videoIdOpcional(b.grabacionVideoId) : String(antes.grabacionVideoId || '');
+    const cambioManual = hayCampo && grabacionVideoId !== String(antes.grabacionVideoId || ''), videoManual = cambioManual || antes.videoManual === true;
     if (!link && !recordingUrl && !grabacionVideoId) { await db.collection(COL).doc(id).delete(); return res.json({ ok: true, borrado: true }); }
-    await db.collection(COL).doc(id).set({ link, recordingUrl, ...(grabacionVideoId ? { grabacionVideoId } : {}), titulo: String(b.titulo || '').slice(0, 200), por: String(d.email || ''), en: new Date().toISOString() });
+    await db.collection(COL).doc(id).set({ link, recordingUrl, ...(grabacionVideoId ? { grabacionVideoId } : {}), ...(videoManual ? { videoManual: true } : {}), titulo: String(b.titulo || '').slice(0, 200), por: String(d.email || ''), en: new Date().toISOString() });
     res.json({ ok: true });
   }));
   app.delete('/api/admin/webinars-enlaces/:id', envolver('admin-borrar', true, async (req, res) => {

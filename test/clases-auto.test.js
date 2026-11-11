@@ -244,3 +244,41 @@ test('editar una clase de prueba no borra su grabación; si un vínculo ya se pe
     assert.equal(s.db.datos.has('clasesPrueba/prueba-1'), false);
   } finally { s.cerrar(); }
 });
+
+test('ID del video de Bunny editable por el administrador: se guarda, se valida, se puede quitar y la reparación automática lo respeta', async () => {
+  const s = await levantar();
+  try {
+    const OTRO = '11111111-2222-4333-8444-555555555555';
+    // clase de prueba con su video enlazado solo
+    await s.llamar('/api/admin/clases-auto/zoom', HOY, 'jefa');
+    await s.llamar('/api/admin/clases-prueba', { id: 'prueba-1', title: 'Prueba de Zoom', date: '2026-12-01', time: '18:00', duration: 60 }, 'jefa');
+    await s.zoomEvento(grabacion('91234567890'));
+    await s.clasesAuto.refrescarPendientes();
+    const cuerpo = { id: 'prueba-1', title: 'Prueba de Zoom', date: '2026-12-01', time: '18:00', duration: 60 };
+    // 1) la lista de pruebas entrega el ID para mostrarlo en el formulario
+    assert.equal((await s.llamar('/api/admin/clases-prueba', null, 'jefa')).cuerpo.clases[0].grabacionVideoId, VIDEO);
+    // 2) un ID inválido se rechaza y no cambia nada
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...cuerpo, grabacionVideoId: 'no-es-un-id' }, 'jefa')).status, 400);
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, VIDEO);
+    // 3) corregirlo a mano: se guarda en minúsculas y queda marcado como manual
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...cuerpo, grabacionVideoId: ' ' + OTRO.toUpperCase() + ' ' }, 'jefa')).status, 200);
+    let c = s.db.datos.get('clasesPrueba/prueba-1'); assert.equal(c.grabacionVideoId, OTRO); assert.equal(c.videoManual, true); assert.equal(c.tieneGrabacion, true);
+    // 4) quitarlo (campo vacío): la clase queda sin grabación y la reparación automática NO lo vuelve a poner
+    assert.equal((await s.llamar('/api/admin/clases-prueba', { ...cuerpo, grabacionVideoId: '' }, 'jefa')).status, 200);
+    c = s.db.datos.get('clasesPrueba/prueba-1'); assert.equal(c.grabacionVideoId, undefined); assert.equal(c.tieneGrabacion, false);
+    await s.llamar('/api/admin/clases-auto', null, 'jefa');
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, undefined, 'una decisión manual no se deshace sola');
+    // 5) si el campo no se envía, se conserva lo que había
+    await s.llamar('/api/admin/clases-prueba', { ...cuerpo, grabacionVideoId: OTRO }, 'jefa');
+    await s.llamar('/api/admin/clases-prueba', { ...cuerpo, instructor: 'Otro' }, 'jefa');
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, OTRO);
+    // 6) clases reales (webinarsPrivados): la lista lo entrega y el guardado lo cambia
+    await s.llamar('/api/admin/webinars-enlaces', { id: '1730000000', titulo: 'Real', link: 'https://meet.google.com/abc-defg-hij', grabacionVideoId: VIDEO }, 'jefa');
+    assert.equal((await s.llamar('/api/admin/webinars-enlaces', null, 'jefa')).cuerpo.webinars.find(w => w.id === '1730000000').grabacionVideoId, VIDEO);
+    assert.equal((await s.llamar('/api/admin/webinars-enlaces', { id: '1730000000', titulo: 'Real', link: 'https://meet.google.com/abc-defg-hij', grabacionVideoId: 'xx' }, 'jefa')).status, 400);
+    await s.llamar('/api/admin/webinars-enlaces', { id: '1730000000', titulo: 'Real', link: 'https://meet.google.com/abc-defg-hij', grabacionVideoId: OTRO }, 'jefa');
+    assert.equal(s.db.datos.get('webinarsPrivados/1730000000').grabacionVideoId, OTRO);
+    await s.llamar('/api/admin/webinars-enlaces', { id: '1730000000', titulo: 'Real', link: 'https://meet.google.com/abc-defg-hij', grabacionVideoId: '' }, 'jefa');
+    assert.equal(s.db.datos.get('webinarsPrivados/1730000000').grabacionVideoId, undefined);
+  } finally { s.cerrar(); }
+});
