@@ -91,7 +91,10 @@ function montarRutasWebinars(app, deps) {
     const b = req.body || {};
     const id = b.id ? idValido(b.id) : 'prueba-' + Date.now();
     if (!/^prueba-/.test(id)) throw errorHttp(400, 'Identificador de clase de prueba inválido.');
-    const doc = { ...limpiarPrueba(b, id), por: texto(d.email, 200), en: new Date().toISOString() };
+    // Al editar la clase se conserva la grabación que ya tenía (Zoom/Meet → Bunny): el formulario no la incluye y no debe borrarla
+    const previo = await db.collection(PRUEBA).doc(id).get(), antes = previo.exists ? (previo.data() || {}) : {};
+    const nuevo = limpiarPrueba(b, id);
+    const doc = { ...nuevo, ...(antes.grabacionVideoId ? { grabacionVideoId: antes.grabacionVideoId, tieneGrabacion: true } : {}), por: texto(d.email, 200), en: new Date().toISOString() };
     await db.collection(PRUEBA).doc(id).set(doc);
     res.json({ ok: true, clase: doc });
   }));

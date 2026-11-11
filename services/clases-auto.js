@@ -121,6 +121,21 @@ function crearClasesAuto(deps) {
     return videoId;
   }
 
+  // Si a una clase «Lista» se le perdió el vínculo con su video (por ejemplo, por una edición antigua que reescribía la clase), se vuelve a enlazar.
+  // Corre como máximo cada 30 minutos, o al instante cuando el administrador abre la lista.
+  let ultimaReparacion = 0;
+  async function repararEnlaces(forzar) {
+    if (!forzar && ahora() - ultimaReparacion < 30 * 60000) return;
+    ultimaReparacion = ahora();
+    const sn = await db.collection(COL).limit(100).get();
+    for (const d of sn.docs) {
+      const e = d.data() || {};
+      if (e.estado !== 'lista' || !e.videoId || !e.claseId) continue;
+      const col = /^prueba-/.test(e.claseId) ? 'clasesPrueba' : 'webinarsPrivados', c = await db.collection(col).doc(e.claseId).get();
+      if (c.exists && !(c.data() || {}).grabacionVideoId) await enlazarVideo(e.claseId, e.videoId);
+    }
+  }
+
   // Revisa en Bunny las grabaciones que se están procesando; las que terminaron quedan enlazadas con su clase.
   async function refrescarPendientes() {
     if (!bunnyListo()) return;
@@ -134,6 +149,7 @@ function crearClasesAuto(deps) {
         else if (v.status === 5 || v.status === 6) await marcar(d.id, { estado: 'error', error: 'Bunny no pudo procesar el video (estado ' + v.status + ').' });
       } catch (err) { /* si Bunny no responde ahora, se vuelve a intentar la próxima vez */ }
     }
+    await repararEnlaces(false).catch(() => {});
   }
 
   async function procesarGrabacion(cuerpo) {
@@ -382,6 +398,7 @@ function crearClasesAuto(deps) {
 
     app.get('/api/admin/clases-auto', envolver('lista', async (req, res) => {
       await refrescarPendientes();
+      await repararEnlaces(true).catch(() => {});
       const sn = await db.collection(COL).limit(100).get();
       const entradas = sn.docs.map(x => ({ ...(x.data() || {}), id: x.id })).sort((p, q) => String(q.creado || '').localeCompare(String(p.creado || '')));
       res.json({ ok: true, entradas, zoomListo: zoomListo(), meetListo: meetListo(), bunnyListo: bunnyListo() });

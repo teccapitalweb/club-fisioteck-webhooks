@@ -339,3 +339,4 @@ test('eliminar una clase automática: solo un administrador; el video de Bunny s
     assert.equal(s2.db.datos.has('clasesAuto/meet-abcDEF123xyz'), false);
   } finally { s2.cerrar(); }
 });
+

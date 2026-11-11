@@ -218,3 +218,29 @@ test('utilidades: firma de reproducción y elección del archivo de Zoom', () =>
   assert.equal(f.id, 2);
   assert.equal(elegirArchivo([{ id: 4, file_type: 'CHAT', download_url: 'u' }]), null);
 });
+
+test('editar una clase de prueba no borra su grabación; si un vínculo ya se perdió, la lista del administrador lo repara', async () => {
+  const s = await levantar();
+  try {
+    await s.llamar('/api/admin/clases-auto/zoom', HOY, 'jefa');
+    await s.llamar('/api/admin/clases-prueba', { id: 'prueba-1', title: 'Prueba de Zoom', date: '2026-12-01', time: '18:00', duration: 60, instructor: 'Wendo' }, 'jefa');
+    await s.zoomEvento(grabacion('91234567890'));
+    await s.clasesAuto.refrescarPendientes();
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, VIDEO);
+    // el administrador edita la clase (agrega la especialidad del ponente): la grabación se conserva
+    const ed = await s.llamar('/api/admin/clases-prueba', { id: 'prueba-1', title: 'Prueba de Zoom', date: '2026-12-01', time: '18:00', duration: 60, instructor: 'Wendo', instructorRole: 'Fisioterapeuta general' }, 'jefa');
+    assert.equal(ed.status, 200);
+    const c = s.db.datos.get('clasesPrueba/prueba-1');
+    assert.equal(c.instructorRole, 'Fisioterapeuta general'); assert.equal(c.grabacionVideoId, VIDEO); assert.equal(c.tieneGrabacion, true);
+    // clase ya dañada por una edición antigua (sin el vínculo): la lista del administrador lo repara
+    const danada = { ...c }; delete danada.grabacionVideoId; danada.tieneGrabacion = false;
+    s.db.datos.set('clasesPrueba/prueba-1', danada);
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, undefined);
+    assert.equal((await s.llamar('/api/admin/clases-auto', null, 'jefa')).status, 200);
+    assert.equal(s.db.datos.get('clasesPrueba/prueba-1').grabacionVideoId, VIDEO, 'el vínculo se repara');
+    // si la clase ya no existe (se eliminó), no se vuelve a crear
+    s.db.datos.delete('clasesPrueba/prueba-1');
+    await s.llamar('/api/admin/clases-auto', null, 'jefa');
+    assert.equal(s.db.datos.has('clasesPrueba/prueba-1'), false);
+  } finally { s.cerrar(); }
+});
