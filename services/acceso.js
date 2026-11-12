@@ -163,11 +163,17 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     for (let k = abiertosAlVencer, j = 1; k < orden.length; k++, j++) aperturaDia[k] = sumarDiasDia(c.reanudoDia, j * conf.dias);
   });
   const abiertos = aperturaDia.filter(d => d <= hoyMx).length;
+  // Un curso abierto porque la persona ya lo empezó no gasta un turno del calendario: los cursos que siguen cerrados se recorren a los turnos más próximos.
+  const empezados = new Set((iniciados || []).map(String));
+  const turnos = aperturaDia.slice(abiertos);
+  const cerrados = orden.slice(abiertos).filter(id => !empezados.has(id));
+  const diaDe = {};
+  cerrados.forEach((id, i) => { diaDe[id] = turnos[i]; });
 
   const cursos = {};
   orden.forEach((id, k) => {
     if (k < abiertos) { cursos[id] = { abierto: true }; return; }
-    const diaApertura = aperturaDia[k], abreEn = inicioDeDiaMx(diaApertura);
+    const diaApertura = diaDe[id] || aperturaDia[k], abreEn = inicioDeDiaMx(diaApertura);
     cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, diasEntreDias(hoyMx, diaApertura)), orden: k };
   });
   // Lo que el miembro ya empezó a ver se le conserva abierto (nadie pierde un curso en marcha)

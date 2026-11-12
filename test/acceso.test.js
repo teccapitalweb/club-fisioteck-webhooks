@@ -381,3 +381,15 @@ test('cursosIniciados: la vista previa gratis no cuenta como curso empezado', ()
   const prog = { c_1: { completed: [0] }, c_2: { completed: [0, 1] }, c_9: { completed: [0] } };
   assert.deepEqual(cursosIniciados(prog, catalogo).sort(), ['2', '9']);
 });
+
+test('un curso abierto por haberlo empezado no gasta un turno del calendario', () => {
+  const cat = { courses: [1, 2, 3, 4, 5].map(id => ({ courseId: id, title: 'C' + id, lessons: [{}, {}] })) };
+  const m = socio({ startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 199 }] });
+  const sin = calcularAcceso({ miembro: m, catalogo: cat, cfg, ahora: dia(15), conMembresia: true });
+  const con = calcularAcceso({ miembro: m, catalogo: cat, cfg, ahora: dia(15), conMembresia: true, iniciados: ['3'] });
+  assert.equal(sin.cursos['3'].dias, 1);
+  assert.equal(sin.cursos['4'].dias, 9);
+  assert.equal(con.cursos['3'].abierto, true);
+  assert.equal(con.cursos['4'].dias, 1);
+  assert.equal(con.cursos['5'].dias, 9);
+});
