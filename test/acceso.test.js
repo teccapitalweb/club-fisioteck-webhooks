@@ -406,3 +406,19 @@ test('un curso nuevo del catálogo se agrega al final de la fila y nadie cambia 
   const d = calcularAcceso({ miembro: reanuda, catalogo: c4, cfg, ahora: new Date('2026-04-21T12:00:00Z'), conMembresia: true, calendarioGuardado: { ciclos: 0, fechas: a.calendario.fechas } });
   assert.equal(d.calendarioCambio, true);
 });
+
+test('antiguo: su orden se conserva, un curso nuevo va al final y al volver a pagar tras vencerse se recalcula solo lo cerrado', () => {
+  const cfgA = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const cat = { courses: [1, 2, 3, 4, 5].map(id => ({ courseId: id, lessons: [{}, {}, {}] })) };
+  const m = { status: 'active', payments: [{ date: '2026-01-01', concept: 'Membresía mensual' }, { date: '2026-10-30T18:00:00Z', concept: 'Membresía mensual' }] };
+  const en = (iso, extra) => calcularAcceso({ miembro: m, catalogo: cat, cfg: cfgA, ahora: new Date(iso), conMembresia: true, avances: { 1: 3, 2: 1 }, ...extra });
+  const a = en('2026-11-02T18:00:00Z');
+  assert.equal(a.cursos['1'].abierto, true, 'el visto se conserva');
+  assert.equal(a.cursos['2'].abierto, false, 'con una sola clase vuelve al calendario');
+  assert.equal(a.cursos['2'].dias, 5);
+  // el administrador mete un curso en medio y otro persona avanza: nada cambia de orden, el nuevo queda al final
+  const cat2 = { courses: [{ courseId: 1, lessons: [{}] }, { courseId: 9, lessons: [{}] }, ...cat.courses.slice(1)] };
+  const b = calcularAcceso({ miembro: m, catalogo: cat2, cfg: cfgA, ahora: new Date('2026-11-02T18:00:00Z'), conMembresia: true, avances: { 1: 3, 2: 1 }, calendarioGuardado: a.calendario });
+  ['2', '3', '4', '5'].forEach(id => assert.equal(b.cursos[id].abreEn, a.cursos[id].abreEn, 'curso ' + id));
+  assert.equal(Date.parse(b.cursos['9'].abreEn) - Date.parse(a.cursos['5'].abreEn), 8 * 864e5);
+});

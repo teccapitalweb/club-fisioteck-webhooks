@@ -103,27 +103,54 @@ function ultimoPago(m) {
   return f[0] || null;
 }
 
+// Fechas de apertura que cada miembro CONSERVA (progress/calendario): no se mueven aunque el catálogo cambie.
+//  - Un curso nuevo del catálogo se agrega AL FINAL de su fila (8 días después de su última fecha).
+//  - Si el miembro se venció y volvió a pagar (más ciclos que los guardados): lo que ya estaba abierto al vencer se conserva y los cursos que seguían cerrados
+//    se vuelven a fechar en el mismo orden: el primero a N días de la reactivación y los demás cada N días.
+// ids: cursos que necesitan fecha, en el orden del catálogo. fresco: fechas calculadas de cero (se usan solo si el miembro aún no tiene calendario guardado).
+function planificarFechas({ ids, guardado, ciclos, fresco, paso }) {
+  const gu = guardado && guardado.fechas && typeof guardado.fechas === 'object' && Object.keys(guardado.fechas).length ? guardado : null;
+  if (!gu) return { fechas: fresco, cambio: true };
+  const fechas = {}; let cambio = false;
+  Object.keys(gu.fechas).forEach(id => { const t = Date.parse(gu.fechas[id]); if (!isNaN(t)) fechas[id] = t; });
+  const previos = Math.max(0, Number(gu.ciclos) || 0);
+  ciclos.slice(previos).forEach(c => {
+    const vencioMs = c.vencio.getTime(), reanudoMs = c.reanudo.getTime();
+    ids.filter(id => fechas[id] !== undefined && fechas[id] > vencioMs).sort((a, b) => fechas[a] - fechas[b]).forEach((id, i) => { fechas[id] = reanudoMs + (i + 1) * paso; cambio = true; });
+  });
+  let ultimo = Math.max(...Object.values(fechas));
+  ids.forEach(id => { if (fechas[id] === undefined) { ultimo += paso; fechas[id] = ultimo; cambio = true; } });
+  if (previos !== ciclos.length) cambio = true;
+  return { fechas, cambio };
+}
+
 // Miembro antiguo: conserva lo que ya vio y el resto sigue el calendario desde el día de su último pago.
 const CLASES_PARA_CONSERVAR = 2;
-function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos }) {
-  const hoyMx = diaMx(ahora || new Date()), pivoteDia = diaMx(pivote) > hoyMx ? hoyMx : diaMx(pivote);
+function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado }) {
+  const ahoraD = ahora || new Date(), ahoraMs = ahoraD.getTime(), hoyMx = diaMx(ahoraD);
+  const pivoteMs = Math.min(pivote.getTime(), ahoraMs), pivoteDia = diaMx(new Date(pivoteMs)), paso = conf.dias * DIA;
   // Un curso cuenta como visto con al menos CLASES_PARA_CONSERVAR clases terminadas; con una sola se vuelve a cerrar y entra al calendario.
   const vistos = new Set(avances ? Object.keys(avances).filter(id => avances[id] >= CLASES_PARA_CONSERVAR) : (iniciados || []).map(String));
-  const cursos = {}; let j = 0;
+  const ciclos = reanudaciones(miembro);
+  const pendientes = ids.filter(id => !vistos.has(id));
+  const fresco = {}; pendientes.forEach((id, i) => { fresco[id] = pivoteMs + (i + 1) * paso; });
+  const plan = planificarFechas({ ids: pendientes, guardado: calendarioGuardado, ciclos, fresco, paso });
+  const cursos = {};
   ids.forEach((id, k) => {
     if (vistos.has(id)) { cursos[id] = { abierto: true, iniciado: true }; return; }
-    j++;
-    const diaApertura = sumarDiasDia(pivoteDia, j * conf.dias);
-    cursos[id] = diaApertura <= hoyMx ? { abierto: true }
-      : { abierto: false, abreEn: inicioDeDiaMx(diaApertura).toISOString(), dias: Math.max(1, diasEntreDias(hoyMx, diaApertura)), orden: k };
+    const t = plan.fechas[id];
+    cursos[id] = t <= ahoraMs ? { abierto: true }
+      : { abierto: false, abreEn: new Date(t).toISOString(), dias: Math.max(1, Math.ceil((t - ahoraMs) / DIA)), orden: k };
   });
   (adelantados || []).forEach(id => { if (cursos[String(id)]) cursos[String(id)] = { abierto: true, porPremio: true }; });
   const prog = progresoAdelanto(retosHechos, conf.retosParaAdelantar);
+  const guardar = {}; pendientes.forEach(id => { guardar[id] = new Date(plan.fechas[id]).toISOString(); });
   return {
     escalonado: true, diasEntreCursos: conf.dias, retosParaAdelantar: conf.retosParaAdelantar,
     retosSuperados: retosSuperados || 0, adelantos: 0, adelanto: { estado: 'no-disponible', motivo: 'renovacion', cursoId: null, ...prog }, retosParaSiguiente: null,
     abiertos: Object.values(cursos).filter(c => c.abierto).length, total: ids.length, orden: ids, cursos, reanudada: true,
-    inicio: pivote.toISOString(), diaMembresia: Math.max(0, diasEntreDias(pivoteDia, hoyMx)) + 1, antiguoRenovado: true
+    inicio: pivote.toISOString(), diaMembresia: Math.max(0, diasEntreDias(pivoteDia, hoyMx)) + 1, antiguoRenovado: true,
+    calendario: { ciclos: ciclos.length, fechas: { ...((calendarioGuardado && calendarioGuardado.fechas) || {}), ...guardar } }, calendarioCambio: plan.cambio
   };
 }
 
@@ -144,7 +171,7 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     // (el primero a N días del pago, y así cada N días). Sin pagos registrados no se sabe desde cuándo contar: todo abierto.
     const pivote = ultimoPago(miembro);
     if (!pivote) return abiertoTodo('anterior');
-    return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos });
+    return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado });
   }
 
   const trial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
@@ -167,20 +194,11 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     const abiertosAlVencer = aperturaMs.filter(t => t <= vencioMs).length;
     for (let k = abiertosAlVencer, j = 1; k < orden.length; k++, j++) aperturaMs[k] = reanudoMs + j * paso;
   });
-  // Cada miembro conserva la fecha de cada curso (calendarioGuardado): un curso nuevo del catálogo se agrega AL FINAL de su fila y nadie cambia de fecha.
-  // Si el miembro volvió a pagar tras vencerse (cambia el número de ciclos), las fechas se vuelven a calcular.
-  const fechasMs = {};
-  orden.forEach((id, k) => { fechasMs[id] = aperturaMs[k]; });
-  const gu = calendarioGuardado && calendarioGuardado.ciclos === ciclos.length && calendarioGuardado.fechas && Object.keys(calendarioGuardado.fechas).length ? calendarioGuardado.fechas : null;
-  if (gu) {
-    let ultimo = Math.max(...Object.values(gu).map(v => Date.parse(v)).filter(n => !isNaN(n)));
-    orden.forEach(id => {
-      const g = Date.parse(gu[id]);
-      if (!isNaN(g)) fechasMs[id] = g; else { ultimo += paso; fechasMs[id] = ultimo; }
-    });
-  }
+  const fresco = {}; orden.forEach((id, k) => { fresco[id] = aperturaMs[k]; });
+  const plan = planificarFechas({ ids: orden, guardado: calendarioGuardado, ciclos, fresco, paso });
+  const fechasMs = plan.fechas;
   const guardarFechas = Object.fromEntries(orden.map(id => [id, new Date(fechasMs[id]).toISOString()]));
-  const cambioCalendario = !gu || orden.some(id => !gu[id]);
+  const cambioCalendario = plan.cambio;
   const cursos = {};
   let abiertos = 0;
   orden.forEach((id, k) => {
@@ -406,4 +424,4 @@ function montarRutasAcceso(app, deps) {
   });
 }
 
-module.exports = { cursosIniciados, configEscalonado, inicioMembresia, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };
+module.exports = { planificarFechas, cursosIniciados, configEscalonado, inicioMembresia, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };
