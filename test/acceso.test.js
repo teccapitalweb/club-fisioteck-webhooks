@@ -266,20 +266,17 @@ test('los retos que ya tenía en el sistema anterior se pasan una sola vez y cue
   } finally { s.cerrar(); }
 });
 
-test('el calendario cuenta días del calendario en hora de México: el día del pago es el 0 y «Restan N días» baja a la medianoche', () => {
+test('el calendario cuenta bloques de 24 horas desde el momento exacto del pago: pagar a las 2 p. m. abre el curso a las 2 p. m. del día 8', () => {
   const miembro = { status: 'active', payments: [{ date: '2026-10-29T20:00:00Z' }] }; // 29 oct, 2 p. m. en México
   const catalogo = { courses: [{ courseId: 1, lessons: [{}] }, { courseId: 2, lessons: [{}] }, { courseId: 3, lessons: [{}] }] };
   const cfg = { escalonadoActivo: true, escalonadoDias: 8 };
   const en = iso => calcularAcceso({ miembro, catalogo, cfg, retosSuperados: 0, retosHechos: {}, ahora: new Date(iso), esAdmin: false, adelantados: [], conMembresia: true });
-  assert.equal(en('2026-10-29T21:00:00Z').cursos['2'].dias, 8, 'el día del pago faltan 8');
-  assert.equal(en('2026-10-30T07:00:00Z').cursos['2'].dias, 7, 'pasada la medianoche de México, faltan 7');
-  assert.equal(en('2026-10-30T18:15:00Z').cursos['2'].dias, 7, 'todo el día siguiente siguen faltando 7');
-  assert.equal(en('2026-10-30T18:15:00Z').cursos['3'].dias, 15);
-  assert.equal(en('2026-11-06T05:59:00Z').cursos['2'].dias, 1, 'el último día antes de abrirse falta 1');
-  assert.equal(en('2026-11-06T05:59:00Z').cursos['2'].abierto, false);
-  assert.equal(en('2026-11-06T06:00:00Z').cursos['2'].abierto, true, 'se abre a las 00:00 del día 8 en México');
-  assert.equal(en('2026-11-06T06:00:00Z').cursos['3'].abierto, false);
-  assert.equal(en('2026-11-14T06:00:00Z').cursos['3'].abierto, true, 'el curso 3 se abre 8 días después');
+  assert.equal(en('2026-10-29T21:00:00Z').cursos['2'].dias, 8);
+  assert.equal(en('2026-11-06T19:59:00Z').cursos['2'].abierto, false, 'un minuto antes de cumplirse las 192 horas sigue cerrado');
+  assert.equal(en('2026-11-06T19:59:00Z').cursos['2'].dias, 1);
+  assert.equal(en('2026-11-06T20:00:00Z').cursos['2'].abierto, true, 'se abre a la misma hora del pago, 8 días después');
+  assert.equal(en('2026-11-06T20:00:00Z').cursos['3'].abierto, false);
+  assert.equal(en('2026-11-14T20:00:00Z').cursos['3'].abierto, true, 'el curso 3 se abre 8 días después');
 });
 
 test('los retos solo adelantan el primer curso de los 8 días; si ya se abrió por fecha, ya no hay adelanto', () => {
@@ -306,7 +303,7 @@ test('si la membresía se vence y se vuelve a pagar: lo abierto se conserva, el 
   [1, 2, 3, 4, 5, 6, 7, 8].forEach(id => assert.equal(a.cursos[String(id)].abierto, true, 'curso ' + id + ' conservado'));
   assert.equal(a.cursos['9'].abierto, false); assert.equal(a.cursos['9'].dias, 3, 'el primero cerrado se abre a 8 días de volver a pagar (28 de abril)');
   assert.equal(a.cursos['10'].dias, 11); assert.equal(a.cursos['11'].dias, 19);
-  assert.equal(en('2026-04-28T06:00:00Z').cursos['9'].abierto, true);
+  assert.equal(en('2026-04-28T12:00:00Z').cursos['9'].abierto, true);
   assert.equal(a.adelanto.estado, 'no-disponible', 'tras volver a pagar ya no se adelanta con retos');
   assert.equal(a.retosParaSiguiente, null);
   // Un pago un poco tarde (dentro de la gracia) no cuenta como vencimiento
@@ -382,14 +379,30 @@ test('cursosIniciados: la vista previa gratis no cuenta como curso empezado', ()
   assert.deepEqual(cursosIniciados(prog, catalogo).sort(), ['2', '9']);
 });
 
-test('un curso abierto por haberlo empezado no gasta un turno del calendario', () => {
+test('un curso abierto por haberlo empezado se queda con su fecha: no recorre a los demás', () => {
   const cat = { courses: [1, 2, 3, 4, 5].map(id => ({ courseId: id, title: 'C' + id, lessons: [{}, {}] })) };
   const m = socio({ startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 199 }] });
-  const sin = calcularAcceso({ miembro: m, catalogo: cat, cfg, ahora: dia(15), conMembresia: true });
   const con = calcularAcceso({ miembro: m, catalogo: cat, cfg, ahora: dia(15), conMembresia: true, iniciados: ['3'] });
-  assert.equal(sin.cursos['3'].dias, 1);
-  assert.equal(sin.cursos['4'].dias, 9);
   assert.equal(con.cursos['3'].abierto, true);
-  assert.equal(con.cursos['4'].dias, 1);
-  assert.equal(con.cursos['5'].dias, 9);
+  assert.equal(con.cursos['4'].dias, 9);
+  assert.equal(con.cursos['5'].dias, 17);
+});
+
+test('un curso nuevo del catálogo se agrega al final de la fila y nadie cambia de fecha', () => {
+  const m = socio({ startDate: '2026-10-01', payments: [{ date: '2026-10-01', amount: 199 }] });
+  const c3 = { courses: [1, 2, 3].map(id => ({ courseId: id, lessons: [{}, {}] })) };
+  const a = calcularAcceso({ miembro: m, catalogo: c3, cfg, ahora: dia(1), conMembresia: true });
+  assert.equal(a.calendarioCambio, true);
+  // el administrador mete un curso nuevo en medio del catálogo
+  const c4 = { courses: [{ courseId: 1, lessons: [{}] }, { courseId: 9, lessons: [{}] }, { courseId: 2, lessons: [{}] }, { courseId: 3, lessons: [{}] }] };
+  const b = calcularAcceso({ miembro: m, catalogo: c4, cfg, ahora: dia(1), conMembresia: true, calendarioGuardado: a.calendario });
+  ['1', '2', '3'].forEach(id => assert.equal(b.calendario.fechas[id], a.calendario.fechas[id], 'el curso ' + id + ' conserva su fecha'));
+  assert.equal(Date.parse(b.calendario.fechas['9']) - Date.parse(a.calendario.fechas['3']), 8 * 864e5, 'el nuevo va a 8 días del último');
+  assert.equal(b.calendarioCambio, true);
+  const c = calcularAcceso({ miembro: m, catalogo: c4, cfg, ahora: dia(1), conMembresia: true, calendarioGuardado: b.calendario });
+  assert.equal(c.calendarioCambio, false);
+  // si vuelve a pagar tras vencerse, las fechas se recalculan
+  const reanuda = socio({ payments: [{ date: '2026-01-01', concept: 'Membresía mensual' }, { date: '2026-04-20', concept: 'Membresía mensual' }] });
+  const d = calcularAcceso({ miembro: reanuda, catalogo: c4, cfg, ahora: new Date('2026-04-21T12:00:00Z'), conMembresia: true, calendarioGuardado: { ciclos: 0, fechas: a.calendario.fechas } });
+  assert.equal(d.calendarioCambio, true);
 });

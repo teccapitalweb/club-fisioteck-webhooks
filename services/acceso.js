@@ -91,7 +91,7 @@ function reanudaciones(m) {
   const out = [];
   for (let i = 1; i < pagos.length; i++) {
     const cubre = pagos[i - 1].anual ? 366 : 31, fin = new Date(pagos[i - 1].f.getTime() + cubre * DIA);
-    if (pagos[i].f - fin > 7 * DIA) out.push({ vencioDia: diaMx(fin), reanudoDia: diaMx(pagos[i].f) });
+    if (pagos[i].f - fin > 7 * DIA) out.push({ vencioDia: diaMx(fin), reanudoDia: diaMx(pagos[i].f), vencio: fin, reanudo: pagos[i].f });
   }
   return out;
 }
@@ -128,7 +128,7 @@ function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados,
 }
 
 // Calcula qué cursos tiene abiertos un socio con membresía. Función pura (se prueba sin Firebase).
-function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null, iniciados = [], avances = null }) {
+function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin, adelantados, conMembresia = true, retosHechos, adelantoRetos = null, iniciados = [], avances = null, calendarioGuardado = null }) {
   const conf = configEscalonado(cfg);
   const ids = (catalogo.courses || []).map(c => String(c.courseId));
   const abiertoTodo = motivo => ({ escalonado: false, motivo, cursos: Object.fromEntries(ids.map(id => [id, { abierto: true }])) });
@@ -151,30 +151,42 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const primero = trial && ids.includes(trial) ? trial : ids[0];
   const orden = [primero, ...ids.filter(id => id !== primero)];
 
-  const hoyMx = diaMx(ahora || new Date()), inicioMx = diaMx(inicio) > hoyMx ? hoyMx : diaMx(inicio); // un pago nunca es de «mañana»: los pagos viejos se fecharon en hora UTC
+  const ahoraD = ahora || new Date(), ahoraMs = ahoraD.getTime(), hoyMx = diaMx(ahoraD);
+  const inicioMs = Math.min(inicio.getTime(), ahoraMs); // un pago nunca es del futuro
+  const inicioMx = diaMx(new Date(inicioMs));
   const dias = Math.max(0, diasEntreDias(inicioMx, hoyMx));
   const nRetos = retosSuperados || 0;
-  // Día en que se abre cada curso: el primero (la prueba) desde el pago; los demás cada N días. Si la membresía se venció y se volvió a pagar,
-  // lo que ya estaba abierto al vencer se conserva y los que seguían cerrados se vuelven a fechar: el primero a N días de la reactivación y los demás cada N días.
-  const aperturaDia = orden.map((_, k) => sumarDiasDia(inicioMx, k * conf.dias));
+  const paso = conf.dias * DIA;
+  // Momento en que se abre cada curso, contando bloques de N días de 24 horas desde el momento exacto del pago (como Alintec): el primero (la prueba) al pagar y
+  // los demás cada N días. Si la membresía se venció y se volvió a pagar, lo que ya estaba abierto al vencer se conserva y los que seguían cerrados se vuelven
+  // a fechar: el primero a N días de la reactivación y los demás cada N días.
+  const aperturaMs = orden.map((_, k) => inicioMs + k * paso);
   const ciclos = reanudaciones(miembro);
   ciclos.forEach(c => {
-    const abiertosAlVencer = aperturaDia.filter(d => d <= c.vencioDia).length;
-    for (let k = abiertosAlVencer, j = 1; k < orden.length; k++, j++) aperturaDia[k] = sumarDiasDia(c.reanudoDia, j * conf.dias);
+    const vencioMs = c.vencio.getTime(), reanudoMs = c.reanudo.getTime();
+    const abiertosAlVencer = aperturaMs.filter(t => t <= vencioMs).length;
+    for (let k = abiertosAlVencer, j = 1; k < orden.length; k++, j++) aperturaMs[k] = reanudoMs + j * paso;
   });
-  const abiertos = aperturaDia.filter(d => d <= hoyMx).length;
-  // Un curso abierto porque la persona ya lo empezó no gasta un turno del calendario: los cursos que siguen cerrados se recorren a los turnos más próximos.
-  const empezados = new Set((iniciados || []).map(String));
-  const turnos = aperturaDia.slice(abiertos);
-  const cerrados = orden.slice(abiertos).filter(id => !empezados.has(id));
-  const diaDe = {};
-  cerrados.forEach((id, i) => { diaDe[id] = turnos[i]; });
-
+  // Cada miembro conserva la fecha de cada curso (calendarioGuardado): un curso nuevo del catálogo se agrega AL FINAL de su fila y nadie cambia de fecha.
+  // Si el miembro volvió a pagar tras vencerse (cambia el número de ciclos), las fechas se vuelven a calcular.
+  const fechasMs = {};
+  orden.forEach((id, k) => { fechasMs[id] = aperturaMs[k]; });
+  const gu = calendarioGuardado && calendarioGuardado.ciclos === ciclos.length && calendarioGuardado.fechas && Object.keys(calendarioGuardado.fechas).length ? calendarioGuardado.fechas : null;
+  if (gu) {
+    let ultimo = Math.max(...Object.values(gu).map(v => Date.parse(v)).filter(n => !isNaN(n)));
+    orden.forEach(id => {
+      const g = Date.parse(gu[id]);
+      if (!isNaN(g)) fechasMs[id] = g; else { ultimo += paso; fechasMs[id] = ultimo; }
+    });
+  }
+  const guardarFechas = Object.fromEntries(orden.map(id => [id, new Date(fechasMs[id]).toISOString()]));
+  const cambioCalendario = !gu || orden.some(id => !gu[id]);
   const cursos = {};
+  let abiertos = 0;
   orden.forEach((id, k) => {
-    if (k < abiertos) { cursos[id] = { abierto: true }; return; }
-    const diaApertura = diaDe[id] || aperturaDia[k], abreEn = inicioDeDiaMx(diaApertura);
-    cursos[id] = { abierto: false, abreEn: abreEn.toISOString(), dias: Math.max(1, diasEntreDias(hoyMx, diaApertura)), orden: k };
+    const t = fechasMs[id];
+    if (t <= ahoraMs) { cursos[id] = { abierto: true }; abiertos++; return; }
+    cursos[id] = { abierto: false, abreEn: new Date(t).toISOString(), dias: Math.max(1, Math.ceil((t - ahoraMs) / DIA)), orden: k };
   });
   // Lo que el miembro ya empezó a ver se le conserva abierto (nadie pierde un curso en marcha)
   (iniciados || []).forEach(id => { const c = cursos[String(id)]; if (c && !c.abierto) cursos[String(id)] = { abierto: true, iniciado: true }; });
@@ -193,7 +205,8 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     retosSuperados: nRetos, adelantos: adelantoRetos ? 1 : 0, adelanto,
     retosParaSiguiente: adelanto.estado === 'disponible' ? Math.max(0, conf.retosParaAdelantar - prog.total) : null,
     abiertos, total: orden.length, orden, cursos, reanudada: ciclos.length > 0,
-    inicio: inicio.toISOString(), diaMembresia: dias + 1
+    inicio: inicio.toISOString(), diaMembresia: dias + 1,
+    calendario: { ciclos: ciclos.length, fechas: guardarFechas }, calendarioCambio: cambioCalendario
   };
 }
 
@@ -273,8 +286,10 @@ function montarRutasAcceso(app, deps) {
     const datosProg = progCursos.exists ? (progCursos.data() || {}) : {};
     const avances = Object.fromEntries(Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed)).map(k => [k.slice(2), datosProg[k].completed.length]));
     const iniciados = cursosIniciados(datosProg, deps.cargarCatalogo());
+    const calSnap = await db.collection('members').doc(uid).collection('progress').doc('calendario').get();
+    const calendarioGuardado = calSnap.exists ? (calSnap.data() || null) : null;
     const params = {
-      iniciados, avances, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
+      calendarioGuardado, iniciados, avances, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
       retosSuperados: Object.keys(retos).length, retosHechos: retos, ahora: new Date(), esAdmin: esAdminPorToken(decoded), adelantados, conMembresia: deps.tieneMembresia(miembro)
     };
     let guardado = datosPremios.adelantoRetos && datosPremios.adelantoRetos.cursoId ? String(datosPremios.adelantoRetos.cursoId) : null;
@@ -284,6 +299,9 @@ function montarRutasAcceso(app, deps) {
       guardado = acceso.adelanto.cursoId;
       await db.collection('members').doc(uid).collection('progress').doc('premios').set({ adelantoRetos: { cursoId: guardado, fecha: new Date().toISOString(), retos: acceso.adelanto.total }, actualizadoMs: Date.now() }, { merge: true });
       acceso = calcularAcceso({ ...params, adelantoRetos: guardado });
+    }
+    if (!soloLeer && acceso.escalonado && acceso.calendarioCambio && acceso.calendario) {
+      try { await db.collection('members').doc(uid).collection('progress').doc('calendario').set({ ciclos: acceso.calendario.ciclos, fechas: acceso.calendario.fechas, actualizadoMs: Date.now() }); } catch (_) { /* se vuelve a intentar en la siguiente consulta */ }
     }
     return { miembro, acceso, retos, cfg: cfgSnap.exists ? cfgSnap.data() : {} };
   }
