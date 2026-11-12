@@ -37,11 +37,13 @@ const tokens = { jefa: { uid: 'jefa', email: 'jefa@fisioteck.test', email_verifi
 
 // Bunny local: recibe el PUT del video y lo guarda para compararlo
 function bunnyLocal() {
-  const recibido = { put: null };
+  const recibido = { put: null, todas: [] };
   const srv = http.createServer((req, res) => {
     const partes = []; req.on('data', d => partes.push(d)); req.on('end', () => {
-      recibido.put = { metodo: req.method, ruta: req.url, cab: req.headers, cuerpo: Buffer.concat(partes) };
-      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"success":true}');
+      const cuerpo = Buffer.concat(partes); recibido.todas.push({ metodo: req.method, ruta: req.url, cuerpo: cuerpo.toString('utf8') });
+      if (req.method === 'PUT') recibido.put = { metodo: req.method, ruta: req.url, cab: req.headers, cuerpo };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(req.method === 'GET' && req.url.includes('/collections') ? '{"items":[{"guid":"col-clases","name":"Clases en vivo"}]}' : '{"success":true}');
     });
   });
   return new Promise(r => srv.listen(0, () => r({ srv, recibido, base: 'http://127.0.0.1:' + srv.address().port })));
@@ -66,6 +68,7 @@ async function levantar(cfg = {}, env = {}) {
     if (u.startsWith('https://www.googleapis.com/drive/v3/files?')) { cfg.consultasDrive = (cfg.consultasDrive || []).concat(decodeURIComponent(u)); return resp(200, { files: cfg.archivosDrive || [] }); }
     if (u.includes('/drive/v3/files/') && u.includes('fields=')) return cfg.driveError ? resp(403, { error: { message: 'The user does not have sufficient permissions for this file.' } }) : resp(200, { size: String(CONTENIDO.length), name: 'clase.mp4', mimeType: 'video/mp4' });
     if (u.includes('/drive/v3/files/') && u.includes('alt=media')) return { status: 200, ok: true, body: new Response(CONTENIDO).body, json: async () => ({}) };
+    if (u.includes('/collections') && (opts.method || 'GET') === 'GET') return resp(200, { items: [{ guid: 'col-clases', name: 'Clases en vivo' }] });
     if (u.endsWith('/videos') && opts.method === 'POST') return resp(200, { guid: VIDEO });
     if (u.includes('/videos/' + VIDEO)) return resp(200, { status: cfg.estadoBunny == null ? 4 : cfg.estadoBunny });
     return resp(404, {});
@@ -124,6 +127,8 @@ test('meet: la grabación se detecta sola, pasa de Drive a Bunny sin cambios y q
     const e = s.db.datos.get('clasesAuto/meet-abcDEF123xyz');
     assert.equal(e.estado, 'subiendo'); assert.equal(e.videoId, VIDEO); assert.equal(e.archivoDrive, 'larga-2', 'se elige la grabación más larga que ya está generada');
     assert.ok(s.llamadas.some(l => l.url.includes('/files/larga-2?alt=media')));
+    const crea = s.llamadas.find(l => l.url.endsWith('/videos') && l.metodo === 'POST');
+    assert.equal(JSON.parse(crea.cuerpo).collectionId, 'col-clases', 'el video se crea dentro de la colección Clases en vivo');
     const put = s.bunny.recibido.put;
     assert.equal(put.metodo, 'PUT'); assert.equal(put.ruta, '/library/1234/videos/' + VIDEO);
     assert.equal(put.cab.accesskey, 'api-key'); assert.equal(Number(put.cab['content-length']), CONTENIDO.length);
@@ -340,3 +345,10 @@ test('eliminar una clase automática: solo un administrador; el video de Bunny s
   } finally { s2.cerrar(); }
 });
 
+
+test('clases en vivo: el video se crea con el id de la colección «Clases en vivo»', async () => {
+  const s = await levantar();
+  try {
+    assert.equal(await s.ca.coleccionClasesPrueba(), 'col-clases');
+  } finally { s.cerrar(); }
+});

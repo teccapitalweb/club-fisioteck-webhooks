@@ -103,6 +103,23 @@ function crearClasesAuto(deps) {
     return j;
   }
 
+  // Las grabaciones de clases en vivo van a su propia colección de Bunny («Clases en vivo») para no revolverse con las clases de los cursos.
+  // Se busca por nombre (o se usa BUNNY_CLASES_COLECCION_ID si se define) y, si no existe, se crea. Si algo falla, el video se sube igual (sin colección).
+  let coleccionCache = '';
+  async function coleccionClases() {
+    if (env.BUNNY_CLASES_COLECCION_ID) return String(env.BUNNY_CLASES_COLECCION_ID);
+    if (coleccionCache) return coleccionCache;
+    try {
+      const nombre = 'Clases en vivo', norm = t => String(t || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const lista = await bunny('/collections?page=1&itemsPerPage=100&search=' + encodeURIComponent(nombre), { method: 'GET' });
+      const hallada = ((lista && lista.items) || []).find(c => norm(c.name) === norm(nombre));
+      if (hallada && hallada.guid) return (coleccionCache = String(hallada.guid));
+      const nueva = await bunny('/collections', { method: 'POST', body: JSON.stringify({ name: nombre }) });
+      if (nueva && nueva.guid) return (coleccionCache = String(nueva.guid));
+    } catch (_) { /* sin colección: el video se sube igual */ }
+    return '';
+  }
+
   // La grabación lista se enlaza con la clase: webinarsPrivados/{id} (clase real) o clasesPrueba/{id} (prueba de administradores)
   async function enlazarVideo(claseId, videoId) {
     const col = /^prueba-/.test(claseId) ? 'clasesPrueba' : 'webinarsPrivados';
@@ -114,7 +131,8 @@ function crearClasesAuto(deps) {
   async function subirABunny(id, entrada, archivo, token) {
     const url = archivo.download_url + (archivo.download_url.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(token);
     const titulo = texto((entrada.titulo || 'Clase en vivo') + ' · ' + (entrada.fecha || ''), 150);
-    const r = await bunny('/videos/fetch', { method: 'POST', body: JSON.stringify({ url, title: titulo }) });
+    const coleccion = await coleccionClases();
+    const r = await bunny('/videos/fetch', { method: 'POST', body: JSON.stringify({ url, title: titulo, ...(coleccion ? { collectionId: coleccion } : {}) }) });
     const videoId = String(r.id || r.guid || '').toLowerCase();
     if (!videoId) throw errorHttp(502, 'Bunny no devolvió el id del video.');
     await marcar(id, { estado: 'subiendo', videoId, archivoZoom: String(archivo.id || ''), error: '' });
@@ -275,7 +293,8 @@ function crearClasesAuto(deps) {
     const meta = await google(DRIVE_API + '/files/' + encodeURIComponent(grab.fileId) + '?fields=size,name,mimeType&supportsAllDrives=true');
     const tam = Number(meta.size) || 0;
     if (!tam) throw errorHttp(502, 'Google Drive no informó el tamaño de la grabación.');
-    const v = await bunny('/videos', { method: 'POST', body: JSON.stringify({ title: texto((entrada.titulo || 'Clase en vivo') + ' · ' + (entrada.fecha || ''), 150) }) });
+    const coleccion = await coleccionClases();
+    const v = await bunny('/videos', { method: 'POST', body: JSON.stringify({ title: texto((entrada.titulo || 'Clase en vivo') + ' · ' + (entrada.fecha || ''), 150), ...(coleccion ? { collectionId: coleccion } : {}) }) });
     const videoId = String(v.guid || v.id || '').toLowerCase();
     if (!videoId) throw errorHttp(502, 'Bunny no devolvió el id del video.');
     const r = await google(DRIVE_API + '/files/' + encodeURIComponent(grab.fileId) + '?alt=media&supportsAllDrives=true', { method: 'GET' }, false, true);
@@ -426,7 +445,7 @@ function crearClasesAuto(deps) {
     }));
   }
 
-  return { montarWebhook, montarRutas, refrescarPendientes, revisarMeet, iniciarRevision, firmarEmbed: id => firmarEmbed(id, env, ahora()), procesarGrabacion };
+  return { coleccionClasesPrueba: coleccionClases, montarWebhook, montarRutas, refrescarPendientes, revisarMeet, iniciarRevision, firmarEmbed: id => firmarEmbed(id, env, ahora()), procesarGrabacion };
 }
 
 module.exports = { crearClasesAuto, firmarEmbed, elegirArchivo };
