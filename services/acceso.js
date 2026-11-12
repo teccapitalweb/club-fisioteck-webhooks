@@ -53,6 +53,18 @@ function progresoAdelanto(superados, necesarios) {
   return { total, porTipo, necesarios, minPorTipo: MIN_POR_TIPO, ok: total >= necesarios && variado };
 }
 
+// Cursos que la persona YA EMPEZÓ de verdad: con al menos una clase terminada que NO sea de vista previa.
+// La vista previa (la primera clase de cada curso) la puede ver cualquiera sin membresía: si contara, quien viera esa clase gratis de varios cursos los
+// tendría todos abiertos al pagar y se saltaría el calendario de 8 días. Las demás clases solo se pueden terminar con el curso abierto, así que sí son una prueba.
+function cursosIniciados(datosProg, catalogo) {
+  const porId = Object.fromEntries(((catalogo && catalogo.courses) || []).map(c => [String(c.courseId), c]));
+  return Object.keys(datosProg || {}).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed)).filter(k => {
+    const curso = porId[k.slice(2)], hechas = datosProg[k].completed;
+    if (!curso) return hechas.length > 0; // curso que ya no está en el catálogo: se conserva lo que había
+    return hechas.some(i => !((curso.lessons || [])[i] && curso.lessons[i].isPreview === true));
+  }).map(k => k.slice(2));
+}
+
 function fechaDe(v) {
   if (!v) return null;
   if (typeof v.toDate === 'function') return v.toDate();
@@ -254,7 +266,7 @@ function montarRutasAcceso(app, deps) {
     const progCursos = await db.collection('members').doc(uid).collection('progress').doc('courses').get();
     const datosProg = progCursos.exists ? (progCursos.data() || {}) : {};
     const avances = Object.fromEntries(Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed)).map(k => [k.slice(2), datosProg[k].completed.length]));
-    const iniciados = Object.keys(datosProg).filter(k => /^c_/.test(k) && datosProg[k] && Array.isArray(datosProg[k].completed) && datosProg[k].completed.length > 0).map(k => k.slice(2));
+    const iniciados = cursosIniciados(datosProg, deps.cargarCatalogo());
     const params = {
       iniciados, avances, miembro, catalogo: deps.cargarCatalogo(), cfg: cfgSnap.exists ? cfgSnap.data() : {},
       retosSuperados: Object.keys(retos).length, retosHechos: retos, ahora: new Date(), esAdmin: esAdminPorToken(decoded), adelantados, conMembresia: deps.tieneMembresia(miembro)
@@ -370,4 +382,4 @@ function montarRutasAcceso(app, deps) {
   });
 }
 
-module.exports = { configEscalonado, inicioMembresia, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };
+module.exports = { cursosIniciados, configEscalonado, inicioMembresia, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };

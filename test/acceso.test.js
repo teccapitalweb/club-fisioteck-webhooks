@@ -371,3 +371,13 @@ test('quien paga de noche (después de las 6 p. m. en México) ve su primer curs
   const b = calcularAcceso({ miembro: { ...m, payments: [{ date: '2026-10-30', amount: 199 }] }, catalogo, cfg: cfgN, ahora });
   assert.deepEqual(abiertos(b), [1]); assert.equal(b.cursos['2'].dias, 8);
 });
+
+test('cursosIniciados: la vista previa gratis no cuenta como curso empezado', () => {
+  const { cursosIniciados } = require('../services/acceso');
+  const catalogo = { courses: [
+    { courseId: '1', lessons: [{ isPreview: true }, {}] },
+    { courseId: '2', lessons: [{ isPreview: true }, {}] }
+  ] };
+  const prog = { c_1: { completed: [0] }, c_2: { completed: [0, 1] }, c_9: { completed: [0] } };
+  assert.deepEqual(cursosIniciados(prog, catalogo).sort(), ['2', '9']);
+});
