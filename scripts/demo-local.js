@@ -122,7 +122,12 @@ process.env.STRIPE_SECRET_KEY = 'sk_test_demo';
 process.env.CERT_SIGNING_KEY = process.env.CERT_SIGNING_KEY || 'llave-demo-local-1234567890';
 process.env.PORT = process.env.PORT || '3000';
 process.env.CLUB_URL = 'http://localhost:8080';
-datos.set('config/club', { precioMes: 199, precioAno: 1999, escalonadoActivo: true, escalonadoDias: 8, retosParaAdelantar: 12 }); // cursos escalonados encendidos para ver los candados y el adelanto por retos
+datos.set('config/club', { precioMes: 199, precioAno: 1999, escalonadoActivo: true, escalonadoDias: 8, retosParaAdelantar: 12, escalonadoDesde: new Date(Date.now() - 30 * 864e5).toISOString().split('T')[0] }); // cursos escalonados encendidos para ver los candados y el adelanto por retos
+// Cuentas ANTIGUAS de ejemplo (anteriores al corte): la gratuita recibe el primer curso como prueba asignada;
+// la que pagó alguna vez conserva lo visto y lo demás entra a su calendario al volver a pagar.
+datos.set('members/antiguo-demo', { name: 'Cuenta Antigua', email: 'antiguo-demo@demo.local', status: 'registered', startDate: new Date(Date.now() - 60 * 864e5).toISOString().split('T')[0], termsAcceptedAt: new Date(Date.now() - 60 * 864e5).toISOString() });
+datos.set('members/antiguo-pagado-demo', { name: 'Antiguo Con Historial', email: 'antiguo-pagado-demo@demo.local', status: 'active', plan: 'mensual', startDate: new Date(Date.now() - 120 * 864e5).toISOString().split('T')[0], payments: [{ date: new Date(Date.now() - 90 * 864e5).toISOString().split('T')[0], amount: 199, status: 'paid', concept: 'Membresía mensual' }, { date: new Date().toISOString().split('T')[0], amount: 199, status: 'paid', concept: 'Membresía mensual' }], nextPaymentDate: new Date(Date.now() + 30 * 864e5).toISOString().split('T')[0] });
+datos.set('members/antiguo-pagado-demo/progress/courses', { c_1777914182781: { completed: [0, 1] }, c_1777915087745: { completed: [0] } });
 // Directorio de ejemplo: dir1 es miembro VIP verificado con contacto y un certificado; dir2 y dir3 son de la comunidad
 datos.set('members/dir1', { name: 'Laura Méndez', email: 'laura@ejemplo.mx', status: 'active', plan: 'mensual', startDate: new Date().toISOString().split('T')[0], payments: [{ date: new Date().toISOString().split('T')[0], amount: 199, status: 'paid', concept: 'Membresía mensual' }], nextPaymentDate: new Date(Date.now() + 30 * 864e5).toISOString().split('T')[0] });
 datos.set('directorioContacto/dir1', { uid: 'dir1', whatsapp: '2221234567', email: 'laura@ejemplo.mx', instagram: '@laura.fisio', linkedin: 'linkedin.com/in/lauramendez' });

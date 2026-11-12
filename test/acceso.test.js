@@ -16,11 +16,12 @@ test('apagado, admin o socio antiguo (pagó antes de encenderlo): lo que ya vio 
   assert.equal(calcularAcceso({ miembro: socio(), catalogo, cfg, ahora: dia(0), esAdmin: true }).escalonado, false);
   const viejo = calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0) });
   assert.equal(viejo.escalonado, true); assert.equal(viejo.antiguoRenovado, true);
-  assert.equal(abiertos(viejo).length, 0, 'sin avance en ningún curso, todo entra al calendario');
+  assert.deepEqual(abiertos(viejo), [1], 'sin ningún curso conservado, el primero pendiente abre de inmediato');
+  assert.equal(viejo.cursos['2'].dias, 8, 'el segundo a los 8 días');
   assert.equal(abiertos(calcularAcceso({ miembro: socio(), catalogo, cfg: { ...cfg, escalonadoDesde: '2026-11-01' }, ahora: dia(0), iniciados: ['1', '2', '3', '4'] })).length, 4, 'lo que ya empezó a ver se conserva');
 });
 
-test('solo si el administrador marca "aplicar a antiguos" la regla les toca; cuentan desde su primer pago', () => {
+test('"tratar antiguos como nuevos" (escalonadoParaTodos): su calendario cuenta desde su primer pago', () => {
   const m = socio();
   const cfgTodos = { ...cfg, escalonadoDesde: '2026-11-01', escalonadoParaTodos: true };
   const dia0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgTodos, ahora: dia(0) });
@@ -229,23 +230,33 @@ test('modo historia: se supera con 3 de 4, los mundos van en orden y el XP se da
   } finally { s.cerrar(); }
 });
 
-// ---- Miembros antiguos: conservan todo lo que tenían, sea cual sea el formato de su ficha ----
-test('un miembro antiguo SIN lista de pagos pero con un cobro reciente de renovación sigue siendo antiguo (todo abierto)', () => {
+// ---- Miembros antiguos: conservan sus avances, sea cual sea el formato de su ficha ----
+test('un miembro antiguo SIN lista de pagos pero con un cobro reciente de renovación: con avances, lo demás sigue el calendario desde ese cobro', () => {
   const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' };
   const legado = { status: 'active', startDate: '2026-01-15', lastPaymentDate: '2026-10-25' }; // alta en enero, renovó la semana pasada
-  const a = calcularAcceso({ miembro: legado, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 28)) });
-  assert.equal(a.escalonado, false); assert.equal(abiertos(a).length, 4);
+  const a = calcularAcceso({ miembro: legado, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 28)), avances: { 2: 3 } });
+  assert.equal(a.antiguoRenovado, true);
+  assert.deepEqual(abiertos(a), [2], 'conserva lo visto');
+  assert.equal(a.cursos['1'].dias, 6, 'lo demás cuenta desde el cobro del 25 de octubre (abre el 2 de noviembre)');
+  // Sin avances y sin pagos antes del corte: se trata como nuevo (su calendario cuenta desde la fecha más vieja de su ficha: todo abierto)
+  const b = calcularAcceso({ miembro: legado, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 28)) });
+  assert.equal(abiertos(b).length, 4);
 });
 
-test('antiguos con distintos formatos de ficha: sin lista de pagos conservan todo abierto; con pagos siguen el calendario desde su último pago; el nuevo también', () => {
+test('antiguos con distintos formatos de ficha: nadie pierde lo que ya tenía abierto (anclas viejas = todo abierto) y la regla aplica con fichas sin pagos', () => {
   const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-20' }, ahora = new Date(Date.UTC(2026, 9, 28, 12));
   const antiguos = [
-    { status: 'active', startDate: '2026-02-10' },
-    { status: 'active', activadoEn: '2026-05-05', startDate: '2026-04-01' },
-    { status: 'active', giftedAt: '2026-06-01' },
+    { status: 'active', startDate: '2026-02-10' }, // sin pagos ni activación: su ancla es su alta (febrero) y todo ya se abrió
+    { status: 'active', activadoEn: '2026-05-05', startDate: '2026-04-01' }, // activado a mano: ancla en la activación
+    { status: 'active', giftedAt: '2026-06-01' }, // regalo: ancla en el regalo
     { status: 'cancelled', startDate: '2026-07-01', accessUntil: '2026-11-30' }
   ];
-  antiguos.forEach(m => { const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora }); assert.equal(a.escalonado, false, JSON.stringify(m)); assert.equal(abiertos(a).length, 4); });
+  antiguos.forEach(m => { const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora }); assert.equal(a.escalonado, true, JSON.stringify(m)); assert.equal(abiertos(a).length, 4, JSON.stringify(m)); });
+  // Cuenta vieja con avances, activada a mano hace poco: conserva lo visto y el calendario cuenta desde esa activación
+  const activadoReciente = calcularAcceso({ miembro: { status: 'active', activadoEn: '2026-10-25', startDate: '2026-03-01' }, catalogo, cfg: cfgDesde, ahora, avances: { 2: 2 }, iniciados: ['2'] });
+  assert.equal(activadoReciente.antiguoRenovado, true);
+  assert.deepEqual(abiertos(activadoReciente), [2], 'conserva lo visto y lo demás espera su fecha desde la activación');
+  assert.equal(activadoReciente.cursos['1'].dias, 5);
   const nuevo = calcularAcceso({ miembro: { status: 'active', startDate: '2026-02-10', payments: [{ date: '2026-10-24' }] }, catalogo, cfg: cfgDesde, ahora });
   assert.equal(nuevo.escalonado, true); assert.equal(nuevo.diaMembresia, 5); assert.equal(abiertos(nuevo).length, 1);
 });
@@ -315,7 +326,7 @@ test('antiguo con plan: conserva lo que vio y lo demás entra al calendario desd
   const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
   const antiguo = pagos => ({ status: 'active', startDate: '2026-05-01', payments: pagos });
   const sinPagos = calcularAcceso({ miembro: { status: 'active', startDate: '2026-05-01' }, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 10, 5, 12)) });
-  assert.equal(sinPagos.escalonado, false); assert.equal(abiertos(sinPagos).length, 4, 'sin pagos registrados no se sabe desde cuándo contar: todo abierto');
+  assert.equal(abiertos(sinPagos).length, 4, 'sin pagos ni avances su ancla es su alta (mayo): todo ya se abrió, nadie pierde nada');
   const m = antiguo([{ date: '2026-05-01', amount: 199 }, { date: '2026-10-27', amount: 199 }]);
   const d0 = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date(Date.UTC(2026, 9, 30, 18)), iniciados: ['2'] });
   assert.equal(d0.escalonado, true); assert.deepEqual(abiertos(d0), [2], 'lo que ya vio sigue abierto');
@@ -339,7 +350,7 @@ test('admin: diagnóstico del acceso de un miembro (solo lectura) con el motivo'
   try {
     const sinPermiso = await s.llamar('/api/admin/acceso-miembro/u1', null, 'socio'); assert.equal(sinPermiso.status, 403);
     const r = await s.llamar('/api/admin/acceso-miembro/u1', null, 'admin');
-    assert.equal(r.status, 200); assert.equal(r.cuerpo.motivo, 'anterior'); assert.equal(r.cuerpo.calendario.activo, true);
+    assert.equal(r.status, 200); assert.equal(r.cuerpo.motivo, 'calendario'); assert.equal(r.cuerpo.calendario.activo, true);
     assert.equal(r.cuerpo.miembro.tieneMembresia, true); assert.equal(r.cuerpo.abiertos, r.cuerpo.total);
     assert.equal((await s.llamar('/api/admin/acceso-miembro/nadie', null, 'admin')).status, 404);
   } finally { s.cerrar(); }
@@ -405,6 +416,62 @@ test('un curso nuevo del catálogo se agrega al final de la fila y nadie cambia 
   const reanuda = socio({ payments: [{ date: '2026-01-01', concept: 'Membresía mensual' }, { date: '2026-04-20', concept: 'Membresía mensual' }] });
   const d = calcularAcceso({ miembro: reanuda, catalogo: c4, cfg, ahora: new Date('2026-04-21T12:00:00Z'), conMembresia: true, calendarioGuardado: { ciclos: 0, fechas: a.calendario.fechas } });
   assert.equal(d.calendarioCambio, true);
+});
+
+// ---- Tipos de miembro antiguo (cuenta anterior al encendido del escalonado) ----
+test('antiguo que NUNCA pagó y no vio nada: al pagar se trata como nuevo (calendario, adelanto por retos y premios)', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const m = { status: 'active', startDate: '2026-06-01', payments: [{ date: '2026-11-05', amount: 199 }] }; // cuenta de junio, primer pago en noviembre
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-05T18:00:00Z') });
+  assert.equal(a.antiguoRenovado, undefined, 'se trata como nuevo');
+  assert.deepEqual(abiertos(a), [1], 'su primer curso abre al pagar');
+  assert.equal(a.cursos['2'].dias, 8);
+  assert.equal(a.adelanto.estado, 'disponible', 'conserva el adelanto por retos');
+  assert.equal(a.calendario.antiguoComoNuevo, true, 'la clasificación se guarda');
+  assert.equal(a.calendarioCambio, true);
+  // su curso de prueba asignado (el primero) no cambia la clasificación aunque lo haya empezado
+  const conPrueba = calcularAcceso({ miembro: { ...m, trialCourseId: 1 }, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-05T18:00:00Z'), iniciados: ['1'], avances: { 1: 2 } });
+  assert.equal(conPrueba.adelanto.estado, 'disponible');
+});
+
+test('antiguo que nunca pagó PERO tiene avances: conserva lo visto, pierde el adelanto por retos y el calendario cuenta desde su pago', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const m = { status: 'active', startDate: '2026-04-01', payments: [{ date: '2026-11-05', amount: 199 }] };
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-05T18:00:00Z'), iniciados: ['3'], avances: { 3: 2, 2: 1 } });
+  assert.equal(a.antiguoRenovado, true, 'con avances fuera de su prueba se le toma como antiguo con historial');
+  assert.deepEqual(abiertos(a), [3], 'conserva el curso con 2 clases; el de 1 clase se cierra');
+  assert.equal(a.adelanto.estado, 'no-disponible');
+  assert.equal(a.calendario.antiguoComoNuevo, false);
+});
+
+test('antiguo que pagó antes pero no vio nada: al volver a pagar, el primer curso abre de inmediato y el segundo a los 8 días', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const m = { status: 'active', startDate: '2026-03-01', payments: [{ date: '2026-04-01', amount: 199 }, { date: '2026-11-05', amount: 199 }] };
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-05T18:00:00Z') });
+  assert.equal(a.antiguoRenovado, true);
+  assert.deepEqual(abiertos(a), [1], 'el primero de la fila abre al pagar');
+  assert.equal(a.cursos['2'].dias, 8);
+  assert.equal(a.adelanto.estado, 'no-disponible', 'sin adelanto por retos');
+});
+
+test('la clasificación de antiguo guardada manda: aunque después avance en otros cursos, quien quedó como nuevo sigue como nuevo', () => {
+  const cfgDesde = { ...cfg, escalonadoDesde: '2026-10-29' };
+  const m = { status: 'active', startDate: '2026-06-01', payments: [{ date: '2026-11-05', amount: 199 }] };
+  const guardado = { ciclos: 0, fechas: {}, antiguoComoNuevo: true };
+  const a = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-20T18:00:00Z'), iniciados: ['1', '2'], avances: { 1: 3, 2: 2 }, calendarioGuardado: guardado });
+  assert.equal(a.antiguoRenovado, undefined, 'sigue clasificado como nuevo');
+  const alReves = calcularAcceso({ miembro: m, catalogo, cfg: cfgDesde, ahora: new Date('2026-11-20T18:00:00Z'), calendarioGuardado: { ciclos: 0, fechas: {}, antiguoComoNuevo: false } });
+  assert.equal(alReves.antiguoRenovado, true, 'y quien quedó con historial sigue con historial');
+});
+
+test('esCuentaAntigua: solo con el escalonado encendido y una fecha de la cuenta anterior al corte', () => {
+  const { esCuentaAntigua } = require('../services/acceso');
+  const cfgDesde = { escalonadoActivo: true, escalonadoDesde: '2026-10-29' };
+  assert.equal(esCuentaAntigua({ startDate: '2026-06-01' }, cfgDesde), true);
+  assert.equal(esCuentaAntigua({ startDate: '2026-11-02' }, cfgDesde), false);
+  assert.equal(esCuentaAntigua({ startDate: '2026-06-01' }, { escalonadoActivo: false, escalonadoDesde: '2026-10-29' }), false);
+  assert.equal(esCuentaAntigua({ startDate: '2026-06-01' }, { escalonadoActivo: true }), false, 'sin fecha de corte nadie es antiguo');
+  assert.equal(esCuentaAntigua({}, cfgDesde), false, 'sin ninguna fecha no se puede saber');
 });
 
 test('antiguo: su orden se conserva, un curso nuevo va al final y al volver a pagar tras vencerse se recalcula solo lo cerrado', () => {

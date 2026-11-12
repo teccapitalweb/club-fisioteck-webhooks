@@ -334,12 +334,35 @@ function pruebaGratuitaEstado(member, catalog) {
   return { estado: 'pendiente', cursoId: null, elegibles };
 }
 
+// Cuenta ANTIGUA (anterior al encendido de los cursos escalonados): no elige su prueba; el servidor le asigna el primer curso de la fila.
+async function cuentaAntiguaParaPrueba(member) {
+  try {
+    const cfgSnap = await db.collection('config').doc('club').get();
+    return require('./services/acceso').esCuentaAntigua(member, cfgSnap.exists ? cfgSnap.data() : {});
+  } catch (_) { return false; }
+}
+async function asignarPruebaAntigua(uid, catalog) {
+  const primero = (catalog.courses || []).find(c => (c.lessons || []).length > 0);
+  if (!primero) return null;
+  await db.collection('members').doc(uid).update({
+    trialCourseId: primero.courseId,
+    trialStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return primero.courseId;
+}
+
 app.get('/api/prueba-gratuita', requireFirebaseUser, async (req, res) => {
   try {
     const memberDoc = await db.collection('members').doc(req.firebaseUser.uid).get();
     if (!memberDoc.exists) return res.status(403).json({ error: 'Completa tu registro gratuito para continuar.' });
     res.set('Cache-Control', 'no-store');
-    return res.json(pruebaGratuitaEstado(memberDoc.data(), loadBunnyCatalog()));
+    const r = pruebaGratuitaEstado(memberDoc.data(), loadBunnyCatalog());
+    if (r.estado === 'pendiente' && await cuentaAntiguaParaPrueba(memberDoc.data())) {
+      const cursoId = await asignarPruebaAntigua(req.firebaseUser.uid, loadBunnyCatalog());
+      if (cursoId !== null) return res.json({ estado: 'elegida', cursoId, asignada: true, elegibles: r.elegibles });
+    }
+    return res.json(r);
   } catch (error) {
     console.error('Prueba gratuita (estado):', error.message);
     return res.status(500).json({ error: 'No se pudo consultar tu prueba gratuita.' });
@@ -354,6 +377,12 @@ app.post('/api/prueba-gratuita', requireFirebaseUser, async (req, res) => {
     if (!curso) return res.status(400).json({ error: 'Ese curso no está disponible como prueba.' });
 
     const ref = db.collection('members').doc(req.firebaseUser.uid);
+    // Una cuenta antigua no elige: su prueba es el primer curso de la fila (se le asigna aquí mismo si aún no la tiene)
+    const previo = await ref.get();
+    if (previo.exists && pruebaGratuitaEstado(previo.data(), catalog).estado === 'pendiente' && await cuentaAntiguaParaPrueba(previo.data())) {
+      const cursoId = await asignarPruebaAntigua(req.firebaseUser.uid, catalog);
+      if (cursoId !== null) return res.json({ estado: 'elegida', cursoId, asignada: true });
+    }
     const resultado = await db.runTransaction(async tx => {
       const snap = await tx.get(ref);
       if (!snap.exists) return { codigo: 403, error: 'Completa tu registro gratuito para continuar.' };

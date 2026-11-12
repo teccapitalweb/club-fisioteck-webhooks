@@ -1,14 +1,21 @@
 // Cursos escalonados y retos que adelantan la apertura (como Alintec y Zoorigen).
 //
 // Con membresía y el escalonado activo (config/club.escalonadoActivo = true, lo enciende el administrador), como en Alintec y Zoorigen:
-//   - Los miembros ANTIGUOS (quienes pagaron antes de `escalonadoDesde`, la fecha en que se encendió) conservan tal cual su avance, su historial y todo lo
-//     que ya tenían abierto. Solo si el administrador marca "aplicar también a miembros antiguos" (escalonadoParaTodos = true) se les aplica la regla.
 //   - El calendario de un miembro empieza cuando PAGA (su primer pago), no cuando creó su cuenta.
 //   - El primer curso es el que el socio eligió en su prueba gratuita (o el primero del catálogo) y está abierto desde el inicio.
 //   - Cada `escalonadoDias` días (8 por defecto) se abre el siguiente curso, en el orden del catálogo.
 //   - ADELANTO POR RETOS (una sola vez): con `retosParaAdelantar` retos superados (12 por defecto, al menos 2 de cada tipo: quiz, ordena,
 //     detective e historia) se abre, sin esperar, el curso que se abriría a los 8 días. Se guarda y no se repite para los demás cursos.
-//   - Quien pagó antes de `escalonadoDesde` (la fecha en que se encendió) conserva todo abierto.
+//   - MIEMBROS ANTIGUOS (su cuenta, pago o activación es anterior a `escalonadoDesde`, la fecha en que se encendió):
+//       · Quien NUNCA pagó ni fue activado y no vio clases fuera de su curso de prueba se trata como NUEVO: su prueba es el primer
+//         curso de la fila (el servidor se la asigna, no la elige) y al pagar tiene su calendario, el adelanto por retos y los premios.
+//       · Los demás conservan lo que ya vieron (2 clases terminadas o más por curso), sus certificados y sus premios; lo que no vieron
+//         se cierra y entra al calendario desde su último pago (o su activación/regalo si no hay pagos): si no conservan ningún curso,
+//         el primero pendiente abre de inmediato y los demás cada N días. Ya no tienen adelanto por retos, pero sí pueden abrir
+//         cursos con los premios (niveles Profesional y Maestro, e invitar amigos).
+//       · La clasificación (como nuevo o con historial) se guarda en progress/calendario.antiguoComoNuevo y no cambia después.
+//   - `escalonadoParaTodos` = true trata a TODOS los antiguos como nuevos: su calendario cuenta desde su PRIMER pago, así que a la
+//     mayoría se les abre casi todo. Lo normal es dejarlo apagado.
 //   - Los administradores ven todo abierto.
 // Los retos se califican AQUÍ con data/retos-claves.json; el navegador solo manda sus respuestas.
 const fs = require('fs');
@@ -16,8 +23,8 @@ const path = require('path');
 const { esAdminPorToken } = require('./certificados');
 
 const DIA = 864e5;
-// El calendario cuenta DÍAS DEL CALENDARIO en hora de México (el día del primer pago es el día 0; el curso 2 se abre 8 días después, a las 00:00).
-// Antes se contaban bloques de 24 horas desde la hora exacta del pago, y el contador «Restan N días» bajaba a mitad del día (y a las 6 p. m. con fechas sin hora).
+// Las aperturas son bloques exactos de 24 horas desde el momento del pago (como Alintec); estos ayudantes de días en hora de México
+// se usan para el día de membresía y los textos (una fecha sin hora se ancla a mediodía UTC para que en México siga siendo ese día).
 const fmtDiaMx = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
 const diaMx = f => fmtDiaMx.format(f);
 const diasEntreDias = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / DIA);
@@ -83,6 +90,38 @@ function inicioMembresia(m) {
   return pagos || menor([m.activadoEn, m.giftedAt, m.membresiaInicio]) || menor([m.lastPaymentDate, m.startDate]);
 }
 
+// Fecha más vieja que se le conoce a la cuenta (alta, pagos, activación o regalo): decide si una cuenta es ANTIGUA
+// (anterior a `escalonadoDesde`, el día en que se encendió el escalonado).
+function inicioRelacion(m) {
+  const fechas = [...(Array.isArray(m.payments) ? m.payments : []).map(p => p && p.date),
+    m.activadoEn, m.giftedAt, m.membresiaInicio, m.lastPaymentDate, m.startDate].map(fechaDe).filter(Boolean).sort((a, b) => a - b);
+  return fechas[0] || null;
+}
+
+// ¿Tuvo membresía ANTES del corte? Pagos, activación o regalo anteriores a `desde`.
+// El alta de la cuenta (startDate) NO cuenta: una cuenta gratuita vieja que nunca pagó no es historial de membresía.
+function historialPrevio(m, desde) {
+  return [...(Array.isArray(m.payments) ? m.payments : []).map(p => p && p.date),
+    m.activadoEn, m.giftedAt, m.membresiaInicio, m.lastPaymentDate].map(fechaDe).some(f => f && f < desde);
+}
+
+// ¿La cuenta es anterior al encendido del escalonado? (la usa también la prueba gratuita: a las cuentas antiguas no se les deja elegir,
+// su prueba es el primer curso de la fila)
+function esCuentaAntigua(miembro, cfg) {
+  const conf = configEscalonado(cfg);
+  if (!conf.activo || !conf.desde) return false;
+  const desde = fechaDe(conf.desde), rel = inicioRelacion(miembro || {});
+  return Boolean(desde && rel && rel < desde);
+}
+
+// Ancla del calendario de un miembro antiguo: su último pago; sin pagos, su activación, regalo o inicio de membresía;
+// y como último recurso el alta de su cuenta (para que la regla aplique a todos los formatos de ficha).
+function pivoteAntiguo(m) {
+  const mayor = lista => { const f = lista.map(fechaDe).filter(Boolean).sort((x, y) => y - x); return f[0] || null; };
+  const pagos = (Array.isArray(m.payments) ? m.payments : []).filter(p => p && p.status !== 'failed' && p.estado !== 'failed' && !(Number(p.amount) <= 0)).map(p => p && p.date);
+  return mayor([...pagos, m.lastPaymentDate]) || mayor([m.activadoEn, m.giftedAt, m.membresiaInicio]) || fechaDe(m.startDate) || null;
+}
+
 // Vencimientos con reactivación (como Alintec): si entre un pago y el siguiente pasó más que el periodo pagado (más una gracia de 7 días), la membresía se venció
 // y luego se volvió a pagar. Devuelve [{ vencioDia, reanudoDia }] en días de México.
 function reanudaciones(m) {
@@ -94,13 +133,6 @@ function reanudaciones(m) {
     if (pagos[i].f - fin > 7 * DIA) out.push({ vencioDia: diaMx(fin), reanudoDia: diaMx(pagos[i].f), vencio: fin, reanudo: pagos[i].f });
   }
   return out;
-}
-
-// Último pago válido (no fallido, con monto) de la lista de pagos.
-function ultimoPago(m) {
-  const f = (Array.isArray(m.payments) ? m.payments : []).filter(p => p && p.status !== 'failed' && p.estado !== 'failed' && !(Number(p.amount) <= 0))
-    .map(p => fechaDe(p.date)).filter(Boolean).sort((a, b) => b - a);
-  return f[0] || null;
 }
 
 // Fechas de apertura que cada miembro CONSERVA (progress/calendario): no se mueven aunque el catálogo cambie.
@@ -126,14 +158,16 @@ function planificarFechas({ ids, guardado, ciclos, fresco, paso }) {
 
 // Miembro antiguo: conserva lo que ya vio y el resto sigue el calendario desde el día de su último pago.
 const CLASES_PARA_CONSERVAR = 2;
-function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado }) {
+function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado, clasifNueva }) {
   const ahoraD = ahora || new Date(), ahoraMs = ahoraD.getTime(), hoyMx = diaMx(ahoraD);
   const pivoteMs = Math.min(pivote.getTime(), ahoraMs), pivoteDia = diaMx(new Date(pivoteMs)), paso = conf.dias * DIA;
   // Un curso cuenta como visto con al menos CLASES_PARA_CONSERVAR clases terminadas; con una sola se vuelve a cerrar y entra al calendario.
   const vistos = new Set(avances ? Object.keys(avances).filter(id => avances[id] >= CLASES_PARA_CONSERVAR) : (iniciados || []).map(String));
   const ciclos = reanudaciones(miembro);
   const pendientes = ids.filter(id => !vistos.has(id));
-  const fresco = {}; pendientes.forEach((id, i) => { fresco[id] = pivoteMs + (i + 1) * paso; });
+  // Si no conserva ningún curso, el primero pendiente abre DE INMEDIATO (siempre hay algo que ver al pagar); si conserva, a los N días.
+  const salto = ids.some(id => vistos.has(id)) ? 1 : 0;
+  const fresco = {}; pendientes.forEach((id, i) => { fresco[id] = pivoteMs + (i + salto) * paso; });
   const plan = planificarFechas({ ids: pendientes, guardado: calendarioGuardado, ciclos, fresco, paso });
   const cursos = {};
   ids.forEach((id, k) => {
@@ -147,10 +181,11 @@ function accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados,
   const guardar = {}; pendientes.forEach(id => { guardar[id] = new Date(plan.fechas[id]).toISOString(); });
   return {
     escalonado: true, diasEntreCursos: conf.dias, retosParaAdelantar: conf.retosParaAdelantar,
-    retosSuperados: retosSuperados || 0, adelantos: 0, adelanto: { estado: 'no-disponible', motivo: 'renovacion', cursoId: null, ...prog }, retosParaSiguiente: null,
+    retosSuperados: retosSuperados || 0, adelantos: 0, adelanto: { estado: 'no-disponible', motivo: 'antiguo', cursoId: null, ...prog }, retosParaSiguiente: null,
     abiertos: Object.values(cursos).filter(c => c.abierto).length, total: ids.length, orden: ids, cursos, reanudada: true,
     inicio: pivote.toISOString(), diaMembresia: Math.max(0, diasEntreDias(pivoteDia, hoyMx)) + 1, antiguoRenovado: true,
-    calendario: { ciclos: ciclos.length, fechas: { ...((calendarioGuardado && calendarioGuardado.fechas) || {}), ...guardar } }, calendarioCambio: plan.cambio
+    calendario: { ciclos: ciclos.length, fechas: { ...((calendarioGuardado && calendarioGuardado.fechas) || {}), ...guardar }, antiguoComoNuevo: false },
+    calendarioCambio: plan.cambio || clasifNueva === true
   };
 }
 
@@ -166,12 +201,26 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
   const inicio = inicioMembresia(miembro);
   const desde = fechaDe(conf.desde);
   if (!inicio) return abiertoTodo('anterior');
-  if (!conf.paraTodos && desde && inicio < desde) {
-    // Miembro antiguo: lo que ya empezó a ver se le conserva abierto y los cursos que no ha visto entran al calendario desde el día de su último pago
-    // (el primero a N días del pago, y así cada N días). Sin pagos registrados no se sabe desde cuándo contar: todo abierto.
-    const pivote = ultimoPago(miembro);
-    if (!pivote) return abiertoTodo('anterior');
-    return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado });
+  // Cuenta ANTIGUA (alta, pago o activación anteriores al encendido). Se clasifica UNA vez y se guarda en progress/calendario:
+  //  · como nuevo: nunca pagó ni fue activado antes del corte y no vio clases fuera de su curso de prueba → sigue el camino normal
+  //    (calendario desde su primer pago, adelanto por retos y premios);
+  //  · con historial: conserva lo visto y lo demás entra al calendario desde su último pago (sin adelanto por retos).
+  let antiguoComoNuevo, clasifNueva = false;
+  const relacion = !conf.paraTodos && desde ? inicioRelacion(miembro) : null;
+  if (relacion && relacion < desde) {
+    const guardadoClas = calendarioGuardado && typeof calendarioGuardado.antiguoComoNuevo === 'boolean' ? calendarioGuardado.antiguoComoNuevo : null;
+    if (guardadoClas === null) {
+      const trialAnt = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
+      const primeroAnt = trialAnt && ids.includes(trialAnt) ? trialAnt : ids[0];
+      const actividad = (iniciados && iniciados.length ? iniciados : Object.keys(avances || {}).filter(id => avances[id] > 0));
+      antiguoComoNuevo = !historialPrevio(miembro, desde) && !actividad.some(id => String(id) !== String(primeroAnt));
+      clasifNueva = true;
+    } else antiguoComoNuevo = guardadoClas;
+    if (!antiguoComoNuevo) {
+      const pivote = pivoteAntiguo(miembro);
+      if (!pivote) return abiertoTodo('anterior');
+      return accesoAntiguoRenovado({ miembro, ids, conf, pivote, ahora, adelantados, iniciados, avances, retosSuperados, retosHechos, calendarioGuardado, clasifNueva });
+    }
   }
 
   const trial = miembro.trialCourseId !== undefined && miembro.trialCourseId !== null ? String(miembro.trialCourseId) : null;
@@ -224,7 +273,8 @@ function calcularAcceso({ miembro, catalogo, cfg, retosSuperados, ahora, esAdmin
     retosParaSiguiente: adelanto.estado === 'disponible' ? Math.max(0, conf.retosParaAdelantar - prog.total) : null,
     abiertos, total: orden.length, orden, cursos, reanudada: ciclos.length > 0,
     inicio: inicio.toISOString(), diaMembresia: dias + 1,
-    calendario: { ciclos: ciclos.length, fechas: guardarFechas }, calendarioCambio: cambioCalendario
+    calendario: { ciclos: ciclos.length, fechas: guardarFechas, ...(antiguoComoNuevo === true ? { antiguoComoNuevo: true } : {}) },
+    calendarioCambio: cambioCalendario || clasifNueva
   };
 }
 
@@ -319,7 +369,7 @@ function montarRutasAcceso(app, deps) {
       acceso = calcularAcceso({ ...params, adelantoRetos: guardado });
     }
     if (!soloLeer && acceso.escalonado && acceso.calendarioCambio && acceso.calendario) {
-      try { await db.collection('members').doc(uid).collection('progress').doc('calendario').set({ ciclos: acceso.calendario.ciclos, fechas: acceso.calendario.fechas, actualizadoMs: Date.now() }); } catch (_) { /* se vuelve a intentar en la siguiente consulta */ }
+      try { await db.collection('members').doc(uid).collection('progress').doc('calendario').set({ ...acceso.calendario, actualizadoMs: Date.now() }); } catch (_) { /* se vuelve a intentar en la siguiente consulta */ }
     }
     return { miembro, acceso, retos, cfg: cfgSnap.exists ? cfgSnap.data() : {} };
   }
@@ -341,7 +391,7 @@ function montarRutasAcceso(app, deps) {
       res.json({
         miembro: { nombre: m.name || '', email: m.email || '', status: m.status || '', plan: m.plan || '', tieneMembresia: !!deps.tieneMembresia(m), activadoEn: m.activadoEn || '', giftedAt: m.giftedAt || '', startDate: m.startDate || '', lastPaymentDate: m.lastPaymentDate || '', accessUntil: m.accessUntil || '', nextPaymentDate: m.nextPaymentDate || '', pagos: fechas },
         calendario: { activo: cfg.escalonadoActivo === true, dias: cfg.escalonadoDias || 8, desde: cfg.escalonadoDesde || '', paraTodos: cfg.escalonadoParaTodos === true },
-        inicioCalculado: acceso.inicio || '', motivo: acceso.motivo || (acceso.escalonado ? 'calendario' : ''), escalonado: !!acceso.escalonado, abiertos: Object.values(acceso.cursos || {}).filter(c => c.abierto).length, total: catalogo.length,
+        inicioCalculado: acceso.inicio || '', motivo: acceso.motivo || (acceso.antiguoRenovado ? 'antiguo' : (acceso.escalonado ? 'calendario' : '')), escalonado: !!acceso.escalonado, abiertos: Object.values(acceso.cursos || {}).filter(c => c.abierto).length, total: catalogo.length,
         cursos: catalogo.map(c => ({ id: String(c.courseId), titulo: c.title, abierto: !!(acceso.cursos[String(c.courseId)] || {}).abierto, dias: (acceso.cursos[String(c.courseId)] || {}).dias || 0 }))
       });
     } catch (e) { console.error('[acceso-miembro]', e.message); res.status(500).json({ error: 'No se pudo revisar el acceso.' }); }
@@ -424,4 +474,4 @@ function montarRutasAcceso(app, deps) {
   });
 }
 
-module.exports = { planificarFechas, cursosIniciados, configEscalonado, inicioMembresia, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };
+module.exports = { planificarFechas, cursosIniciados, configEscalonado, inicioMembresia, inicioRelacion, historialPrevio, esCuentaAntigua, pivoteAntiguo, calcularAcceso, calificarQuiz, calificarOrden, calificarDetective, progresoAdelanto, xpDeRetoSuperado, montarRutasAcceso };
