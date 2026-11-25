@@ -154,7 +154,7 @@ test('reportes del formulario anterior: pasan al Buzón una sola vez, con su res
     assert.equal(beto.ultimoDe, 'miembro'); assert.equal(beto.sinLeerAdmin, 1, 'sin respuesta = por responder');
     assert.equal(ana.ultimoDe, 'admin'); assert.equal(ana.sinLeerAdmin, 0); assert.equal(ana.sinLeerMiembro, 0, 'lo viejo no enciende el punto rojo del miembro');
     const hiloAna = (await s.llamar('/api/admin/soporte-chat/u1', 'GET', null, 'admin')).cuerpo.mensajes;
-    assert.equal(hiloAna.length, 2); assert.equal(hiloAna[0].de, 'miembro'); assert.match(hiloAna[0].texto, /Cobro doble/); assert.equal(hiloAna[1].de, 'admin');
+    assert.equal(hiloAna.length, 2); assert.equal(hiloAna[0].importado, true, 'se marca que viene del formulario anterior'); assert.equal(hiloAna[0].de, 'miembro'); assert.match(hiloAna[0].texto, /Cobro doble/); assert.equal(hiloAna[1].de, 'admin');
     assert.equal((await s.llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo.mensajes.length, 2, 'el miembro ve su historial anterior en su chat');
     assert.ok(s.db.datos.get('config/soporte_chat_migrado'), 'queda la marca de que ya se migró');
     // volver a listar no duplica nada
@@ -181,7 +181,7 @@ test('reportes nuevos que lleguen por el formulario viejo (Club sin actualizar) 
     const r = await llamar('/api/admin/soporte/' + nuevo.cuerpo.id, 'POST', { respuesta: 'Ya te abrimos el curso, intenta de nuevo.' }, 'admin');
     assert.equal(r.status, 200);
     buzon = (await llamar('/api/admin/soporte-chat', 'GET', null, 'admin')).cuerpo;
-    assert.equal(buzon.conversaciones[0].ultimoDe, 'admin'); assert.equal(buzon.conversaciones[0].sinLeerMiembro, 1, 'la respuesta nueva enciende el punto rojo del miembro');
+    assert.equal(buzon.conversaciones[0].ultimoDe, 'admin'); assert.equal(buzon.conversaciones[0].sinLeerAdmin, 0, 'ya respondida: nada sin leer para el equipo'); assert.equal(buzon.conversaciones[0].sinLeerMiembro, 1, 'la respuesta nueva enciende el punto rojo del miembro');
     const mia = (await llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo;
     assert.equal(mia.mensajes.length, 2); assert.equal(mia.mensajes[1].texto, 'Ya te abrimos el curso, intenta de nuevo.');
   } finally { srv.close(); }

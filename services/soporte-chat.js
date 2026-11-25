@@ -54,7 +54,7 @@ function serializarConversacion(id, d = {}) {
 }
 const serializarMensaje = doc => {
   const d = doc.data() || {};
-  return { id: doc.id, de: d.de === 'admin' ? 'admin' : 'miembro', nombre: d.nombre || '', texto: d.texto || '', creadoMs: Number(d.creadoMs) || 0 };
+  return { id: doc.id, de: d.de === 'admin' ? 'admin' : 'miembro', nombre: d.nombre || '', texto: d.texto || '', creadoMs: Number(d.creadoMs) || 0, importado: d.importado === true };
 };
 
 // deps: { db, admin, ahora? }
@@ -123,7 +123,7 @@ function montarRutasSoporteChat(app, deps) {
       uid, nombre: (previa && previa.nombre) || nombre, correo: (previa && previa.correo) || String(v.email || '').toLowerCase().slice(0, 220),
       tema: (previa && TEMAS.includes(previa.tema)) ? previa.tema : 'otro',
       creadoMs: previa && Number(previa.creadoMs) ? Math.min(Number(previa.creadoMs), base) : base,
-      sinLeerAdmin: (previa ? Number(previa.sinLeerAdmin) || 0 : 0) + (nuevoMiembro && !respuesta && v.estado === 'nuevo' ? 1 : 0),
+      sinLeerAdmin: (nuevaRespuesta && esElMasReciente) ? 0 : (previa ? Number(previa.sinLeerAdmin) || 0 : 0) + (nuevoMiembro && !respuesta && v.estado === 'nuevo' ? 1 : 0), // si el equipo ya respondió, ya no hay nada sin leer para él
       sinLeerMiembro: (previa ? Number(previa.sinLeerMiembro) || 0 : 0) + (nuevaRespuesta && opciones.avisar ? 1 : 0),
       ...(esElMasReciente ? { ultimoMensaje: ultimoTexto, ultimoDe, actualizadoMs: ultimoMs, estado: v.estado === 'resuelto' && respuesta ? 'resuelto' : 'abierto', resueltoMs: 0, resueltoPor: null } : {})
     }, { merge: true });
