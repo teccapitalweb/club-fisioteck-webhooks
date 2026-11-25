@@ -7,6 +7,7 @@
 //   DELETE /api/admin/soporte/:id          borra un reporte
 // Todo se valida aquí; las reglas de Firestore no dejan que nadie escriba en `soporte` desde el navegador.
 const { esAdminPorToken } = require('./certificados');
+const correoSvc = require('./correo');
 
 const TIPOS = ['queja', 'sugerencia', 'problema', 'pregunta', 'otro'];
 const ESTADOS = ['nuevo', 'revision', 'resuelto'];
@@ -76,8 +77,16 @@ function montarRutasSoporte(app, deps) {
     }
     if (!Object.keys(cambios).length) throw errorHttp(400, 'No hay nada que guardar.');
     await ref.set(cambios, { merge: true });
-    if (respondio && v.uid) { try { await require('./avisos').crearAviso(db, v.uid, 'soporte_' + req.params.id + '_' + cambios.respondidoMs, { tipo: 'sistema', titulo: 'Respondimos tu reporte', texto: cambios.respuesta, pagina: 'account' }); } catch (_) { /* el aviso es un extra */ } }
-    res.json({ ok: true });
+    // El miembro se entera por la campana (lleva a Configuración → Mis reportes, donde está la respuesta completa) y por correo
+    let correoEnviado = false;
+    if (respondio && v.uid) { try { await require('./avisos').crearAviso(db, v.uid, 'soporte_' + req.params.id + '_' + cambios.respondidoMs, { tipo: 'sistema', titulo: 'Respondimos tu reporte', texto: cambios.respuesta, pagina: 'settings' }); } catch (_) { /* el aviso es un extra */ } }
+    if (respondio && v.email) {
+      try {
+        const enviar = deps.enviarCorreo || (correoSvc.configurado() ? correoSvc.enviarConResend : null);
+        if (enviar) { const p = correoSvc.plantillaRespuestaSoporte({ nombre: v.nombre, asunto: v.asunto, respuesta: cambios.respuesta }); const r = await enviar({ para: v.email, asunto: p.asunto, html: p.html, texto: p.texto, idempotencyKey: 'soporte-' + req.params.id + '-' + cambios.respondidoMs }); correoEnviado = !(r && r.ok === false); }
+      } catch (e) { console.warn('[soporte correo]', e && e.message); }
+    }
+    res.json({ ok: true, correoEnviado });
   }));
   app.delete('/api/admin/soporte/:id', envolver('borrar', true, async (req, res) => {
     if (!idValido(req.params.id)) throw errorHttp(400, 'Datos inválidos.');

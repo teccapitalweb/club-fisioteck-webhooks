@@ -22,11 +22,11 @@ async function levantar(semilla, reloj) {
   const db = fakeDb(semilla);
   const tokens = { admin: { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true }, ana: { uid: 'u1', email: 'ana@mail.com', email_verified: true }, beto: { uid: 'u2', email: 'beto@mail.com', email_verified: true } };
   const admin = { auth: () => ({ verifyIdToken: async t => { if (!tokens[t]) throw new Error('x'); return tokens[t]; } }) };
-  const app = express(); app.use(express.json()); montarRutasSoporte(app, { db, admin, ahora: reloj });
+  const correos = []; const app = express(); app.use(express.json()); montarRutasSoporte(app, { db, admin, ahora: reloj, enviarCorreo: async c => { correos.push(c); return { ok: true }; } });
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const base = 'http://127.0.0.1:' + srv.address().port;
   const llamar = async (ruta, metodo = 'GET', cuerpo, token) => { const r = await fetch(base + ruta, { method: metodo, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: cuerpo ? JSON.stringify(cuerpo) : undefined }); return { status: r.status, cuerpo: await r.json().catch(() => ({})) }; };
-  return { db, llamar, cerrar: () => srv.close() };
+  return { db, llamar, correos, cerrar: () => srv.close() };
 }
 
 test('validación del reporte', () => {
@@ -60,6 +60,10 @@ test('el administrador responde, cambia el estado y el miembro recibe un aviso; 
     const mio = (await s.llamar('/api/soporte/mios', 'GET', null, 'ana')).cuerpo.reportes[0];
     assert.equal(mio.estado, 'revision'); assert.ok(mio.respuesta.includes('corregimos'));
     assert.ok([...s.db.datos.keys()].some(k => k.startsWith('members/u1/avisos/soporte_')), 'avisa en la campana');
+    const aviso = [...s.db.datos.entries()].find(([k]) => k.startsWith('members/u1/avisos/soporte_'))[1];
+    assert.equal(aviso.pagina, 'settings', 'el aviso lleva a Configuración, donde está la respuesta');
+    assert.equal(s.correos.length, 1, 'también se manda por correo'); assert.equal(s.correos[0].para, 'ana@mail.com'); assert.ok(s.correos[0].texto.includes('corregimos') && s.correos[0].html.includes('corregimos'));
+    assert.equal((await s.llamar('/api/admin/soporte/' + id, 'POST', { respuesta: 'Ya lo corregimos, descárgalo otra vez.' }, 'admin')).status, 400); assert.equal(s.correos.length, 1, 'la misma respuesta no se manda dos veces');
     assert.equal((await s.llamar('/api/admin/soporte/' + id, 'POST', { estado: 'resuelto' }, 'admin')).status, 200);
     assert.equal((await s.llamar('/api/admin/soporte/' + id, 'DELETE', null, 'admin')).status, 200);
     assert.equal((await s.llamar('/api/admin/soporte', 'GET', null, 'admin')).cuerpo.conteo.total, 0);

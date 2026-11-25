@@ -83,6 +83,17 @@ function plantillaRestablecer({ enlace }) {
   return { asunto, html: marco({ titulo: asunto, saludo, parrafo, textoBoton: 'Crear nueva contraseña', enlace, notaFinal, etiqueta: 'Seguridad de tu cuenta' }), texto: `${saludo} (válido por 1 hora):\n${enlace}\n\n${notaFinal}\n` };
 }
 
+// Correo cuando el equipo responde un reporte de soporte del miembro: lleva la respuesta COMPLETA (la campana solo muestra un fragmento).
+function plantillaRespuestaSoporte({ nombre, asunto, respuesta }) {
+  const n = primerNombre(nombre), tema = limpiar(asunto, 100) || 'tu reporte', texto = String(respuesta || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, 1500);
+  const saludo = n ? `Hola, ${n}` : 'Hola';
+  const parrafo = `El equipo de FisioTeck respondió tu reporte «${tema}».`;
+  const detalleHtml = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#F2F9F8;border:1px solid #BFE6E1;border-left:5px solid #159E92;border-radius:12px;"><tr><td style="padding:14px 16px;font-size:14px;line-height:1.65;color:#33475B;white-space:pre-line;">${esc(texto)}</td></tr></table>`;
+  const notaFinal = 'También puedes verla en el Club: Configuración → Mis reportes. Si necesitas algo más, responde desde ahí con un nuevo reporte.';
+  const asuntoCorreo = 'Respondimos tu reporte · FisioTeck';
+  return { asunto: asuntoCorreo, html: marco({ titulo: asuntoCorreo, saludo, parrafo, textoBoton: 'Abrir el Club', enlace: CLUB() + '/', notaFinal, detalleHtml, etiqueta: 'Soporte' }), texto: `${saludo}.\n\n${parrafo}\n\n${texto}\n\n${notaFinal}\n${CLUB()}/\n` };
+}
+
 // Correo cuando se emite un certificado (una sola vez). El PDF va adjunto si se pudo generar.
 function plantillaCertificado({ nombre, curso, folio, clases, conAdjunto }) {
   const urlPanel = CLUB() + '/';
@@ -173,6 +184,6 @@ function enlacePropio(enlaceFirebase, modo) {
 }
 
 module.exports = {
-  marco, plantillaVerificacion, plantillaRestablecer, plantillaCertificado, enviarConResend, enviarCorreoCertificado, enlacePropio,
+  marco, plantillaVerificacion, plantillaRestablecer, plantillaCertificado, plantillaRespuestaSoporte, enviarConResend, enviarCorreoCertificado, enlacePropio,
   configurado, primerNombre, esc, limpiar, CLUB, SITIO, CONTACTO
 };
