@@ -105,9 +105,11 @@ test('la respuesta del administrador llega con aviso en la campana y los no-leí
     assert.equal(s.db.datos.get(aviso).pagina, 'soporte');
     const vistazo = (await s.llamar('/api/soporte-chat?vistazo=1', 'GET', null, 'ana')).cuerpo;
     assert.equal(vistazo.conversacion.sinLeerMiembro, 1, 'el vistazo del punto rojo NO marca leído');
+    assert.equal(s.db.datos.get(aviso).leido, false, 'el aviso de la campana sigue pendiente mientras no lo lea');
     const mia = (await s.llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo;
     assert.equal(mia.mensajes.length, 2); assert.equal(mia.mensajes[1].de, 'admin'); assert.equal(mia.mensajes[1].nombre, 'Equipo FisioTeck');
     assert.equal((await s.llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo.conversacion.sinLeerMiembro, 0, 'leerla la pone al día');
+    assert.equal(s.db.datos.get(aviso).leido, true, 'al leer el chat, el aviso de la campana también queda leído');
   } finally { s.cerrar(); }
 });
 

@@ -87,6 +87,14 @@ function montarRutasSoporteChat(app, deps) {
     const s = await mensajesDe(uid).orderBy('creadoMs', 'desc').limit(MAX_MENSAJES).get();
     return s.docs.map(serializarMensaje).reverse();
   }
+  // Al leer el chat, los avisos de la campana sobre respuestas del equipo ya no están pendientes (nunca lanza)
+  async function avisosLeidos(uid) {
+    try {
+      const sn = await db.collection('members').doc(String(uid)).collection('avisos').limit(100).get();
+      await Promise.all(sn.docs.filter(x => { const a = x.data() || {}; return a.tipo === 'soporte' && a.leido !== true; })
+        .map(x => db.collection('members').doc(String(uid)).collection('avisos').doc(x.id).set({ leido: true }, { merge: true })));
+    } catch (e) { console.warn('[soporte-chat avisos]', e && e.message); }
+  }
   const responder = (res, err, donde) => {
     const codigo = Number(err && err.codigo) || 500;
     if (codigo === 500) console.error('[soporte-chat ' + donde + ']', err && err.message);
@@ -101,7 +109,7 @@ function montarRutasSoporteChat(app, deps) {
       const s = await conv(d.uid).get();
       if (!s.exists) return res.json({ ok: true, conversacion: null, mensajes: [] });
       const datos = s.data() || {};
-      if (req.query.vistazo !== '1' && Number(datos.sinLeerMiembro) > 0) { await conv(d.uid).set({ sinLeerMiembro: 0 }, { merge: true }); datos.sinLeerMiembro = 0; }
+      if (req.query.vistazo !== '1' && Number(datos.sinLeerMiembro) > 0) { await conv(d.uid).set({ sinLeerMiembro: 0 }, { merge: true }); datos.sinLeerMiembro = 0; await avisosLeidos(d.uid); }
       res.json({ ok: true, conversacion: serializarConversacion(s.id, datos), mensajes: req.query.vistazo === '1' ? [] : await leerMensajes(d.uid) });
     } catch (e) { responder(res, e, 'mia'); }
   });
