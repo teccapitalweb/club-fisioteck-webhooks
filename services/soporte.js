@@ -52,6 +52,8 @@ function montarRutasSoporte(app, deps) {
     const doc = { uid: d.uid, email: String(d.email || '').slice(0, 160), nombre, ...r.reporte, estado: 'nuevo', creadoMs: t, creado: new Date(t).toISOString(), respuesta: '', respondidoMs: 0 };
     const id = require('crypto').randomBytes(10).toString('hex');
     await col().doc(id).set(doc);
+    // Copia en el Buzón privado (un Club abierto con la versión anterior todavía manda reportes por aquí); nunca estorba al reporte
+    if (deps.alGuardarReporte) { try { await deps.alGuardarReporte(id, doc, { avisar: false }); } catch (e) { console.warn('[soporte buzón]', e && e.message); } }
     res.json({ ok: true, id });
   }));
   app.get('/api/soporte/mios', envolver('mios', false, async (req, res, d) => {
@@ -77,6 +79,8 @@ function montarRutasSoporte(app, deps) {
     }
     if (!Object.keys(cambios).length) throw errorHttp(400, 'No hay nada que guardar.');
     await ref.set(cambios, { merge: true });
+    // La respuesta también queda en el Buzón del miembro (el formulario de Configuración ya no existe, ahí es donde la lee)
+    if (deps.alGuardarReporte) { try { await deps.alGuardarReporte(req.params.id, { ...v, ...cambios }, { avisar: respondio }); } catch (e) { console.warn('[soporte buzón]', e && e.message); } }
     // El miembro se entera por la campana (lleva a Configuración → Mis reportes, donde está la respuesta completa) y por correo
     let correoEnviado = false;
     if (respondio && v.uid) { try { await require('./avisos').crearAviso(db, v.uid, 'soporte_' + req.params.id + '_' + cambios.respondidoMs, { tipo: 'sistema', titulo: 'Respondimos tu reporte', texto: cambios.respuesta, pagina: 'settings' }); } catch (_) { /* el aviso es un extra */ } }

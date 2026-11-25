@@ -1339,8 +1339,8 @@ require('./services/cuenta').montarRutasCuenta(app, { db, admin, stripe, tieneMe
 require('./services/admin-miembros').montarRutasAdminMiembros(app, { db, admin, stripe }); // pagos desde Stripe, papelera de miembros y retos y XP del panel
 require('./services/avisos-config').montarRutasAvisosConfig(app, { db, admin }); // aviso global del Club, «clases en vivo pronto» y avisos a todos desde el panel
 require('./services/foro-admin').montarRutasForoAdmin(app, { db, admin }); // moderación del foro y temas oficiales del equipo
-require('./services/soporte').montarRutasSoporte(app, { db, admin }); // quejas, sugerencias y problemas de los miembros hacia el panel del administrador
-require('./services/soporte-chat').montarRutasSoporteChat(app, { db, admin }); // Buzón privado: chat miembro ↔ administración (como ICADEM)
+const soporteChat = require('./services/soporte-chat').montarRutasSoporteChat(app, { db, admin }); // Buzón privado: chat miembro ↔ administración (como ICADEM)
+require('./services/soporte').montarRutasSoporte(app, { db, admin, alGuardarReporte: soporteChat.importarReporte }); // reportes anteriores: también quedan en el Buzón
 require('./services/avisos').montarRutasAvisos(app, { db, admin, tieneMembresia: memberHasPremiumAccess }); // avisos personales de la campana (respuestas del foro)
 clasesAuto.montarRutas(app); // crear la reunión de Zoom con grabación y ver el estado de cada grabación (solo administradores)
 clasesAuto.iniciarRevision(); // cada 3 minutos: busca grabaciones nuevas de Meet y revisa lo que Bunny está procesando

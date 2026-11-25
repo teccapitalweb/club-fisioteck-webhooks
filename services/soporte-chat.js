@@ -95,6 +95,59 @@ function montarRutasSoporteChat(app, deps) {
         .map(x => db.collection('members').doc(String(uid)).collection('avisos').doc(x.id).set({ leido: true }, { merge: true })));
     } catch (e) { console.warn('[soporte-chat avisos]', e && e.message); }
   }
+  // ───────── Reportes del formulario anterior (colección «soporte») ─────────
+  // Cada reporte viejo se vuelve un mensaje del miembro (y su respuesta, un mensaje del equipo) dentro de SU conversación, para que todo esté en el
+  // mismo lugar. Es idempotente: los mensajes llevan un id fijo (rep_<id>), así que repetirlo no duplica nada.
+  //   opciones.avisar: la respuesta es nueva y el miembro debe enterarse (punto rojo); en la migración inicial no.
+  async function importarReporte(id, v, opciones = {}) {
+    if (!v || !v.uid || !id) return false;
+    const uid = String(v.uid), base = Number(v.creadoMs) || ahora();
+    const mensaje = String(v.mensaje || '').trim(); if (!mensaje) return false;
+    const asunto = String(v.asunto || '').trim(), sinPuntos = asunto.replace(/…$/, '');
+    const textoMiembro = ((asunto && !mensaje.startsWith(sinPuntos) ? asunto + '\n\n' : '') + mensaje).slice(0, MAX_TEXTO);
+    const respuesta = String(v.respuesta || '').trim().slice(0, MAX_TEXTO), respMs = Number(v.respondidoMs) || (base + 1);
+    const nombre = String(v.nombre || v.email || 'Miembro FisioTeck').slice(0, 160);
+    const refM = mensajesDe(uid).doc('rep_' + id), refR = mensajesDe(uid).doc('rep_' + id + '_r');
+    const [prevM, prevR] = await Promise.all([refM.get(), refR.get()]);
+    let nuevoMiembro = false, nuevaRespuesta = false;
+    if (!prevM.exists) { await refM.set({ de: 'miembro', uid, nombre, texto: textoMiembro, creadoMs: base, importado: true }); nuevoMiembro = true; }
+    if (respuesta && (!prevR.exists || (prevR.data() || {}).texto !== respuesta)) {
+      await refR.set({ de: 'admin', uid: '', nombre: 'Equipo FisioTeck', texto: respuesta, creadoMs: respMs, importado: true });
+      nuevaRespuesta = !prevR.exists;
+    }
+    if (!nuevoMiembro && !nuevaRespuesta) return false;
+    const s = await conv(uid).get(), previa = s.exists ? (s.data() || {}) : null;
+    const ultimoMs = respuesta ? respMs : base, ultimoDe = respuesta ? 'admin' : 'miembro', ultimoTexto = (respuesta || textoMiembro).slice(0, 240);
+    const esElMasReciente = !previa || ultimoMs >= (Number(previa.actualizadoMs) || 0);
+    await conv(uid).set({
+      uid, nombre: (previa && previa.nombre) || nombre, correo: (previa && previa.correo) || String(v.email || '').toLowerCase().slice(0, 220),
+      tema: (previa && TEMAS.includes(previa.tema)) ? previa.tema : 'otro',
+      creadoMs: previa && Number(previa.creadoMs) ? Math.min(Number(previa.creadoMs), base) : base,
+      sinLeerAdmin: (previa ? Number(previa.sinLeerAdmin) || 0 : 0) + (nuevoMiembro && !respuesta && v.estado === 'nuevo' ? 1 : 0),
+      sinLeerMiembro: (previa ? Number(previa.sinLeerMiembro) || 0 : 0) + (nuevaRespuesta && opciones.avisar ? 1 : 0),
+      ...(esElMasReciente ? { ultimoMensaje: ultimoTexto, ultimoDe, actualizadoMs: ultimoMs, estado: v.estado === 'resuelto' && respuesta ? 'resuelto' : 'abierto', resueltoMs: 0, resueltoPor: null } : {})
+    }, { merge: true });
+    return true;
+  }
+
+  // Una sola vez: pasa al Buzón los reportes que ya existían (marca en config/soporte_chat_migrado)
+  let migracion = null;
+  async function migrarSiHaceFalta() {
+    if (migracion) return migracion;
+    migracion = (async () => {
+      try {
+        const marca = db.collection('config').doc('soporte_chat_migrado');
+        if ((await marca.get()).exists) return 0;
+        const sn = await db.collection('soporte').orderBy('creadoMs', 'desc').limit(300).get();
+        let n = 0;
+        for (const x of sn.docs.slice().reverse()) { if (await importarReporte(x.id, x.data() || {}, { avisar: false })) n++; }
+        await marca.set({ ms: ahora(), reportes: n });
+        return n;
+      } catch (e) { console.warn('[soporte-chat migrar]', e && e.message); migracion = null; return 0; }
+    })();
+    return migracion;
+  }
+
   const responder = (res, err, donde) => {
     const codigo = Number(err && err.codigo) || 500;
     if (codigo === 500) console.error('[soporte-chat ' + donde + ']', err && err.message);
@@ -175,6 +228,7 @@ function montarRutasSoporteChat(app, deps) {
     try {
       if (!await soloAdmin(req, res)) return;
       res.set('Cache-Control', 'private, no-store');
+      await migrarSiHaceFalta();
       const s = await db.collection(COLECCION).orderBy('actualizadoMs', 'desc').limit(250).get();
       const conversaciones = s.docs.map(x => serializarConversacion(x.id, x.data()));
       res.json({ ok: true, conversaciones, sinLeer: conversaciones.reduce((n, c) => n + c.sinLeerAdmin, 0) });
@@ -239,6 +293,8 @@ function montarRutasSoporteChat(app, deps) {
       res.json({ ok: true, estado });
     } catch (e) { responder(res, e, 'estado'); }
   });
+
+  return { importarReporte, migrarSiHaceFalta };
 }
 
 module.exports = { montarRutasSoporteChat, limpiarTexto, limpiarTema, serializarConversacion, COLECCION, TEMAS, MAX_TEXTO, MAX_MENSAJES };

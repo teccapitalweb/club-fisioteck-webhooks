@@ -12,14 +12,15 @@ function fakeDb(semilla = {}) {
     async set(v, o) { datos.set(ruta, o && o.merge ? { ...(datos.get(ruta) || {}), ...v } : { ...v }); },
     async delete() { datos.delete(ruta); }, collection: n => col(ruta + '/' + n) });
   const col = ruta => {
-    const docs = (orden, dir, tope) => {
+    const docs = (orden, dir, tope, filtro) => {
       let l = [...datos.keys()].filter(k => k.startsWith(ruta + '/') && !k.slice(ruta.length + 1).includes('/')).map(k => ({ id: k.split('/').pop(), v: datos.get(k) }));
+      if (filtro) l = l.filter(x => x.v[filtro[0]] === filtro[1]);
       if (orden) l.sort((a, b) => (dir === 'desc' ? (b.v[orden] || 0) - (a.v[orden] || 0) : (a.v[orden] || 0) - (b.v[orden] || 0)));
       if (tope) l = l.slice(0, tope);
       return l.map(x => ({ id: x.id, data: () => x.v }));
     };
-    const consulta = (orden, dir, tope) => ({ orderBy: (c, d) => consulta(c, d || 'asc', tope), limit: n => consulta(orden, dir, n), async get() { return { docs: docs(orden, dir, tope) }; } });
-    return { doc: id => ref(ruta + '/' + (id || 'auto' + (++seq))), ...consulta(null, null, null) };
+    const consulta = (orden, dir, tope, filtro) => ({ where: (c, _o, val) => consulta(orden, dir, tope, [c, val]), orderBy: (c, d) => consulta(c, d || 'asc', tope, filtro), limit: n => consulta(orden, dir, n, filtro), async get() { return { docs: docs(orden, dir, tope, filtro) }; } });
+    return { doc: id => ref(ruta + '/' + (id || 'auto' + (++seq))), ...consulta(null, null, null, null) };
   };
   return { datos, collection: n => col(n) };
 }
@@ -139,4 +140,49 @@ test('el tema se guarda solo (crea la conversación si no existía) y el límite
     t += 3600 * 1000 + 1000;
     assert.equal((await s.llamar('/api/soporte-chat/mensajes', 'POST', { mensaje: 'ya pasó la hora', clientRequestId: rid(998) }, 'ana')).status, 201);
   } finally { s.cerrar(); }
+});
+
+test('reportes del formulario anterior: pasan al Buzón una sola vez, con su respuesta, sin duplicar y sin avisar de lo viejo', async () => {
+  const s = await levantar({
+    'soporte/r1': { uid: 'u2', nombre: 'Beto Ruiz', email: 'beto@mail.com', tipo: 'problema', asunto: 'Video', mensaje: 'No me carga el video de la clase 3 en el celular', estado: 'nuevo', creadoMs: 1700000000000, respuesta: '', respondidoMs: 0 },
+    'soporte/r2': { uid: 'u1', nombre: 'Ana Torres', email: 'ana@mail.com', tipo: 'queja', asunto: 'Cobro doble', mensaje: 'Me cobraron dos veces este mes', estado: 'revision', creadoMs: 1700000100000, respuesta: 'Ya lo revisamos y te devolvimos el cobro de más.', respondidoMs: 1700000200000 }
+  });
+  try {
+    const buzon = (await s.llamar('/api/admin/soporte-chat', 'GET', null, 'admin')).cuerpo;
+    assert.equal(buzon.conversaciones.length, 2, 'los dos reportes viejos ya están en el Buzón');
+    const beto = buzon.conversaciones.find(c => c.uid === 'u2'), ana = buzon.conversaciones.find(c => c.uid === 'u1');
+    assert.equal(beto.ultimoDe, 'miembro'); assert.equal(beto.sinLeerAdmin, 1, 'sin respuesta = por responder');
+    assert.equal(ana.ultimoDe, 'admin'); assert.equal(ana.sinLeerAdmin, 0); assert.equal(ana.sinLeerMiembro, 0, 'lo viejo no enciende el punto rojo del miembro');
+    const hiloAna = (await s.llamar('/api/admin/soporte-chat/u1', 'GET', null, 'admin')).cuerpo.mensajes;
+    assert.equal(hiloAna.length, 2); assert.equal(hiloAna[0].de, 'miembro'); assert.match(hiloAna[0].texto, /Cobro doble/); assert.equal(hiloAna[1].de, 'admin');
+    assert.equal((await s.llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo.mensajes.length, 2, 'el miembro ve su historial anterior en su chat');
+    assert.ok(s.db.datos.get('config/soporte_chat_migrado'), 'queda la marca de que ya se migró');
+    // volver a listar no duplica nada
+    await s.llamar('/api/admin/soporte-chat', 'GET', null, 'admin');
+    assert.equal((await s.llamar('/api/admin/soporte-chat/u1', 'GET', null, 'admin')).cuerpo.mensajes.length, 2);
+  } finally { s.cerrar(); }
+});
+
+test('reportes nuevos que lleguen por el formulario viejo (Club sin actualizar) también caen en el Buzón y su respuesta avisa al miembro', async () => {
+  const db = fakeDb({ 'members/u1': { name: 'Ana Torres', email: 'ana@mail.com', status: 'active' } });
+  const app = express(); app.use(express.json());
+  const tokens = { admin: { uid: 'a1', email: 'teccapitalweb@gmail.com', email_verified: true }, ana: { uid: 'u1', email: 'ana@mail.com', email_verified: true } };
+  const admin = { auth: () => ({ verifyIdToken: async t => { if (!tokens[t]) throw new Error('x'); return tokens[t]; } }) };
+  const chat = montarRutasSoporteChat(app, { db, admin });
+  require('../services/soporte').montarRutasSoporte(app, { db, admin, alGuardarReporte: chat.importarReporte, enviarCorreo: async () => ({ ok: true }) });
+  const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
+  const base = 'http://127.0.0.1:' + srv.address().port;
+  const llamar = async (ruta, metodo = 'GET', cuerpo, token) => { const r = await fetch(base + ruta, { method: metodo, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: cuerpo ? JSON.stringify(cuerpo) : undefined }); return { status: r.status, cuerpo: await r.json().catch(() => ({})) }; };
+  try {
+    const nuevo = await llamar('/api/soporte', 'POST', { tipo: 'problema', asunto: 'No entra', mensaje: 'No puedo entrar al curso de rodilla desde ayer' }, 'ana');
+    assert.equal(nuevo.status, 200);
+    let buzon = (await llamar('/api/admin/soporte-chat', 'GET', null, 'admin')).cuerpo;
+    assert.equal(buzon.conversaciones.length, 1); assert.equal(buzon.conversaciones[0].sinLeerAdmin, 1); assert.equal(buzon.conversaciones[0].ultimoDe, 'miembro');
+    const r = await llamar('/api/admin/soporte/' + nuevo.cuerpo.id, 'POST', { respuesta: 'Ya te abrimos el curso, intenta de nuevo.' }, 'admin');
+    assert.equal(r.status, 200);
+    buzon = (await llamar('/api/admin/soporte-chat', 'GET', null, 'admin')).cuerpo;
+    assert.equal(buzon.conversaciones[0].ultimoDe, 'admin'); assert.equal(buzon.conversaciones[0].sinLeerMiembro, 1, 'la respuesta nueva enciende el punto rojo del miembro');
+    const mia = (await llamar('/api/soporte-chat', 'GET', null, 'ana')).cuerpo;
+    assert.equal(mia.mensajes.length, 2); assert.equal(mia.mensajes[1].texto, 'Ya te abrimos el curso, intenta de nuevo.');
+  } finally { srv.close(); }
 });
