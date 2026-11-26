@@ -1334,7 +1334,11 @@ require('./services/acceso').montarRutasAcceso(app, depsAcceso); // /api/acceso,
 require('./services/resenas').montarRutasResenas(app, depsAcceso); // reseñas de cursos (solo quien tiene el certificado)
 require('./services/rutas-referidos').montarRutasReferidos(app, depsAcceso); // referidos y premio por invitar
 require('./services/creditos').montarRutasCreditos(app, depsAcceso); // créditos y cupones (cuentas con y sin membresía)
-require('./services/directorio').montarRutasDirectorio(app, depsAcceso); // directorio VIP: contacto privado, VIP verificado y certificados
+// Red profesional del directorio: conexiones entre miembros (solicitudes, aceptar, límites, avisos en la campana)
+const redProfesional = require('./services/red-profesional').montarRutasRed(app, depsAcceso);
+depsAcceso.conectadosDe = redProfesional.conectadosDe;
+require('./services/directorio').montarRutasDirectorio(app, depsAcceso); // directorio VIP: contacto privado (con alcance por canal), VIP verificado, certificados y portadas
+require('./services/perfil-profesional').montarRutasPerfil(app, depsAcceso); // perfil profesional (CV) con visibilidad por sección
 require('./services/cuenta').montarRutasCuenta(app, { db, admin, stripe, tieneMembresia: memberHasPremiumAccess }); // eliminar mi cuenta (borra todo lo de la persona)
 require('./services/admin-miembros').montarRutasAdminMiembros(app, { db, admin, stripe }); // pagos desde Stripe, papelera de miembros y retos y XP del panel
 require('./services/avisos-config').montarRutasAvisosConfig(app, { db, admin }); // aviso global del Club, «clases en vivo pronto» y avisos a todos desde el panel

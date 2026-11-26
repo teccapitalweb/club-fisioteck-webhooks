@@ -55,7 +55,7 @@ test('el contacto solo lo recibe quien tiene membresía; el VIP verificado y los
     const gratis = await s.llamar('/api/directorio/meta', null, 'gratis');
     assert.equal(gratis.cuerpo.viewerVip, false); assert.deepEqual(gratis.cuerpo.contactos, {});
     assert.equal(JSON.stringify(gratis.cuerpo).includes('5551234567'), false);
-    assert.deepEqual(gratis.cuerpo.miContacto, { whatsapp: '5559999999', email: '', linkedin: '', web: '', instagram: '', cedula: '', cedulaVisible: false });
+    assert.deepEqual(gratis.cuerpo.miContacto, { whatsapp: '5559999999', email: '', linkedin: '', web: '', instagram: '', cedula: '', cedulaVisible: false, alcances: { whatsapp: 'miembros', email: 'miembros', linkedin: 'miembros', web: 'miembros', instagram: 'miembros' } });
     assert.equal(vip.cuerpo.contactos.v1.cedula, '99887766'); // visible: se entrega
     assert.equal(JSON.stringify(vip.cuerpo).includes('12345678'), false); // oculta: no sale
     assert.equal((await s.llamar('/api/directorio/meta', null, 'nadie')).status, 401);
