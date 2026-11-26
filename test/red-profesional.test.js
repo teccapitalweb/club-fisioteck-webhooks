@@ -84,6 +84,18 @@ test('conectar: solicitud → aceptar, con aviso en la campana en ambos pasos', 
   } finally { s.cerrar(); }
 });
 
+test('conectar es beneficio VIP: sin membresía no se envía ni se acepta (el admin sí puede)', async () => {
+  const s = await levantar();
+  try {
+    assert.equal((await s.llamar('/api/red/solicitar', 'POST', { uid: 'u2' }, 'caro')).status, 402, 'caro (sin membresía) no puede enviar solicitud');
+    const env = await s.llamar('/api/red/solicitar', 'POST', { uid: 'u3' }, 'ana');
+    assert.equal(env.cuerpo.estado, 'enviada', 'ana (VIP) sí puede escribirle a caro');
+    assert.equal((await s.llamar('/api/red/u1/aceptar', 'POST', null, 'caro')).status, 402, 'caro (sin membresía) no puede aceptar aunque le hayan escrito');
+    // el administrador no tiene membresía de socio, pero igual puede probar la red
+    assert.equal((await s.llamar('/api/red/solicitar', 'POST', { uid: 'u2' }, 'admin')).status, 409, 'el admin pasa el filtro VIP (llega hasta la siguiente regla: no tiene tarjeta publicada)');
+  } finally { s.cerrar(); }
+});
+
 test('reglas de la red: tarjeta publicada, rechazo con espera de 24 h, límite diario y cruces inválidos', async () => {
   let t = 1700000000000; const reloj = () => t;
   const s = await levantar({ 'directorio/u1': { nombre: 'Ana', publicado: false } }, reloj);

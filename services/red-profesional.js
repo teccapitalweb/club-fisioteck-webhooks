@@ -34,6 +34,9 @@ function montarRutasRed(app, deps) {
   const ahora = deps.ahora || (() => Date.now());
   const rel = (a, b) => db.collection(COL).doc(idPar(a, b));
   const tarjeta = async uid => { const s = await db.collection('directorio').doc(uid).get(); return s.exists ? (s.data() || {}) : null; };
+  const miembroDe = async uid => { const s = await db.collection('members').doc(uid).get(); return s.exists ? (s.data() || {}) : null; };
+  // Conectar (enviar o aceptar) es un beneficio VIP, igual que ver el contacto; rechazar/cancelar/eliminar no lo exige.
+  const esVip = async (uid, d) => esAdminPorToken(d) || !!(deps.tieneMembresia && deps.tieneMembresia((await miembroDe(uid)) || {}));
 
   async function sesion(req, res) {
     const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
@@ -82,6 +85,7 @@ function montarRutasRed(app, deps) {
   app.post('/api/red/solicitar', envolver('solicitar', async (req, res, d) => {
     const otro = String((req.body || {}).uid || '').trim();
     if (!uidValido(otro) || otro === d.uid) throw errorHttp(400, 'Elige a otra persona del directorio para conectar.');
+    if (!(await esVip(d.uid, d))) throw errorHttp(402, 'Conectar con otros profesionales es un beneficio de la membresía VIP.');
     const [mia, suya, previo, lim] = await Promise.all([tarjeta(d.uid), tarjeta(otro), rel(d.uid, otro).get(), db.collection(COL_LIMITES).doc(d.uid).get()]);
     if (!mia || mia.publicado !== true) throw errorHttp(409, 'Publica tu tarjeta del directorio antes de conectar.');
     if (!suya || suya.publicado !== true || suya.visible === false) throw errorHttp(404, 'Ese perfil no está disponible.');
@@ -111,6 +115,7 @@ function montarRutasRed(app, deps) {
     if (accion === 'aceptar') {
       if (r.estado === 'aceptada') return res.json({ ok: true, estado: 'conectado' });
       if (!(r.estado === 'pendiente' && r.para === d.uid)) throw errorHttp(409, 'Solo puedes aceptar solicitudes que te enviaron.');
+      if (!(await esVip(d.uid, d))) throw errorHttp(402, 'Conectar con otros profesionales es un beneficio de la membresía VIP.');
       const mia = await tarjeta(d.uid);
       if (!mia || mia.publicado !== true) throw errorHttp(409, 'Publica tu tarjeta del directorio antes de aceptar.');
       await rel(d.uid, otro).set({ ...r, estado: 'aceptada', actualizadoMs: t });
