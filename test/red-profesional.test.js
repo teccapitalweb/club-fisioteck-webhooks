@@ -84,6 +84,13 @@ test('conectar: solicitud → aceptar, con aviso en la campana en ambos pasos', 
   } finally { s.cerrar(); }
 });
 
+test('una tarjeta oculta por moderación no recibe solicitudes de conexión', async () => {
+  const s = await levantar({ 'directorioModeracion/u2': { oculta: true } });
+  try {
+    assert.equal((await s.llamar('/api/red/solicitar', 'POST', { uid: 'u2' }, 'ana')).status, 404);
+  } finally { s.cerrar(); }
+});
+
 test('conectar es beneficio VIP: sin membresía no se envía ni se acepta (el admin sí puede)', async () => {
   const s = await levantar();
   try {

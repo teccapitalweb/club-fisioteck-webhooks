@@ -86,9 +86,9 @@ function montarRutasRed(app, deps) {
     const otro = String((req.body || {}).uid || '').trim();
     if (!uidValido(otro) || otro === d.uid) throw errorHttp(400, 'Elige a otra persona del directorio para conectar.');
     if (!(await esVip(d.uid, d))) throw errorHttp(402, 'Conectar con otros profesionales es un beneficio de la membresía VIP.');
-    const [mia, suya, previo, lim] = await Promise.all([tarjeta(d.uid), tarjeta(otro), rel(d.uid, otro).get(), db.collection(COL_LIMITES).doc(d.uid).get()]);
+    const [mia, suya, previo, lim, mod] = await Promise.all([tarjeta(d.uid), tarjeta(otro), rel(d.uid, otro).get(), db.collection(COL_LIMITES).doc(d.uid).get(), db.collection('directorioModeracion').doc(otro).get()]);
     if (!mia || mia.publicado !== true) throw errorHttp(409, 'Publica tu tarjeta del directorio antes de conectar.');
-    if (!suya || suya.publicado !== true || suya.visible === false) throw errorHttp(404, 'Ese perfil no está disponible.');
+    if (!suya || suya.publicado !== true || suya.visible === false || (mod.exists && (mod.data() || {}).oculta === true)) throw errorHttp(404, 'Ese perfil no está disponible.');
     const r = previo.exists ? (previo.data() || {}) : null;
     const estado = estadoDe(r, d.uid);
     if (estado === 'conectado' || estado === 'enviada') return res.json({ ok: true, estado });
